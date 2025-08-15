@@ -1,7 +1,7 @@
 # ====== Config ======
 TARGET     := serialread
-SRC        := serialread.c protocol.c io_buffer.c
-INC_DIRS   := .
+SRC        := serialread.c protocol/protocol.c protocol/io_buffer.c
+INC_DIRS   := protocol
 CC         := gcc
 
 # Build type: make 或 make BUILD=release/debug
@@ -38,7 +38,11 @@ run: $(EXE)
 	./$(EXE)
 
 clean:
+ifeq ($(OS),Windows_NT)
+	-del /Q $(subst /,\,$(OBJ)) $(subst /,\,$(DEP)) $(EXE) 2>nul
+else
 	$(RM) $(OBJ) $(DEP) $(EXE)
+endif
 
 rebuild: clean all
 

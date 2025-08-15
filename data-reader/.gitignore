@@ -1,0 +1,36 @@
+# Object files
+*.o
+
+# Dependency files
+*.d
+
+# Executable files
+*.exe
+
+# Build artifacts
+serialread
+serialread.exe
+
+# Debug files
+*.pdb
+
+# Temporary files
+*~
+*.tmp
+*.swp
+*.swo
+
+# IDE files
+.vscode/
+*.vcxproj*
+*.sln
+*.suo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
