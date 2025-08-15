@@ -1,6 +1,6 @@
 # ====== Config ======
 TARGET     := serialread
-SRC        := serialread.c protocol/protocol.c protocol/io_buffer.c
+SRC        := serialread.c protocol/protocol.c protocol/io_buffer.c shared_memory.c
 INC_DIRS   := protocol
 CC         := gcc
 

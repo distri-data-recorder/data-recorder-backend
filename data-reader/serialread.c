@@ -9,6 +9,7 @@
 
 #include "io_buffer.h"
 #include "protocol.h"
+#include "shared_memory.h"
 
 // ===================== Command ID Definitions =====================
 // Status and Parameter Commands (PC -> Device: 0x00-0x7F)
@@ -72,6 +73,9 @@ static RawFrame_t g_frameBatch[FRAME_BATCH_SAVE_COUNT];
 static int        g_frameInBatch = 0;
 
 static volatile bool g_running = true;
+
+// 共享内存管理器
+static SharedMemManager g_sharedMem = {0};
 
 // ===================== 工具函数 =====================
 
@@ -241,6 +245,15 @@ static void handle_adc_data_packet(uint8_t seq, const uint8_t* payload, uint16_t
         printf("... (%u more bytes)", payloadLen - 16);
     }
     printf("\n");
+
+    // 写入共享内存
+    if (g_sharedMem.initialized) {
+        if (writeADCPacket(&g_sharedMem, seq, payload, payloadLen)) {
+            printf("[SHARED_MEM] ADC packet written (seq=%u, len=%u)\n", seq, payloadLen);
+        } else {
+            printf("[SHARED_MEM] Failed to write ADC packet\n");
+        }
+    }
 }
 
 // 处理日志消息
@@ -585,6 +598,13 @@ int main(int argc, char* argv[])
         printf("Warning: cannot open output file, frames won't be saved.\n");
     }
 
+    // 初始化共享内存
+    if (initSharedMemory(&g_sharedMem)) {
+        printf("Shared memory initialized successfully.\n");
+    } else {
+        printf("Warning: Failed to initialize shared memory. Data processing will not be available.\n");
+    }
+
     HANDLE hSerial = open_serial(comPort);
     if (hSerial == INVALID_HANDLE_VALUE) {
         if (g_fp) fclose(g_fp);
@@ -596,6 +616,9 @@ int main(int argc, char* argv[])
 
     CloseHandle(hSerial);
     if (g_fp) fclose(g_fp);
+
+    // 清理共享内存
+    cleanupSharedMemory(&g_sharedMem);
 
     puts("Bye.");
     return 0;
