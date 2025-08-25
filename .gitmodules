@@ -1,3 +1,6 @@
 [submodule "data-reader/protocol"]
 	path = data-reader/protocol
 	url = git@github.com:distri-data-recorder/data-recorder-protocol.git
+[submodule "test-sender/protocol"]
+	path = test-sender/protocol
+	url = git@github.com:distri-data-recorder/data-recorder-protocol.git
