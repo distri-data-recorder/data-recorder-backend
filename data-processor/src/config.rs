@@ -1,66 +1,113 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Config {
-    pub shared_memory_name: String,
-    pub message_queue_name: String,
-    pub web_server: WebServerConfig,
-    pub websocket: WebSocketConfig,
-    pub data_processing: DataProcessingConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WebServerConfig {
     pub host: String,
     pub port: u16,
-    pub tls_cert_path: Option<String>,
-    pub tls_key_path: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WebSocketConfig {
     pub host: String,
     pub port: u16,
-    pub max_connections: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DataProcessingConfig {
-    pub buffer_size: usize,
-    pub processing_interval_ms: u64,
-    pub max_packet_age_ms: u64,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorageConfig {
+    /// 保存文件的根目录（启动时会确保存在）
+    pub data_dir: String,
+    /// 自动命名时的文件名前缀（如 "wave"）
+    pub default_prefix: String,
+    /// 自动命名时的扩展名（如 ".bin" / ".txt"）
+    pub default_ext: String,
+    /// 根目录最大保留文件数（超过后删除较旧文件）
+    pub max_files: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Config {
+    pub web_server: WebServerConfig,
+    pub websocket: WebSocketConfig,
+    pub shared_memory_name: String,
+    pub storage: StorageConfig,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            shared_memory_name: "ADC_DATA_SHARED_MEM".to_string(),
-            message_queue_name: "data_reader_to_processor".to_string(),
             web_server: WebServerConfig {
-                host: "127.0.0.1".to_string(),
-                port: 8443,
-                tls_cert_path: None,
-                tls_key_path: None,
+                host: "127.0.0.1".into(),
+                port: 8080,
             },
             websocket: WebSocketConfig {
-                host: "127.0.0.1".to_string(),
-                port: 8080,
-                max_connections: 100,
+                host: "127.0.0.1".into(),
+                port: 8081, // 和 HTTP 区分开也可以
             },
-            data_processing: DataProcessingConfig {
-                buffer_size: 1024,
-                processing_interval_ms: 10,
-                max_packet_age_ms: 1000,
+            shared_memory_name: "ADC_DATA_SHARED_MEM".into(),
+            storage: StorageConfig {
+                data_dir: "./data".into(),
+                default_prefix: "wave".into(),
+                default_ext: ".bin".into(),
+                max_files: 200,
             },
         }
     }
 }
 
 impl Config {
+    /// 载入配置：默认值 + 环境变量覆盖
+    ///
+    /// 支持的环境变量：
+    /// - WEB_HOST, WEB_PORT
+    /// - WS_HOST, WS_PORT
+    /// - SHM_NAME
+    /// - DATA_DIR, FILE_PREFIX, FILE_EXT, MAX_FILES
     pub fn load() -> Result<Self> {
-        // For now, use default configuration
-        // In the future, this could load from a config file or environment variables
-        Ok(Self::default())
+        let mut cfg = Self::default();
+
+        // Web
+        if let Ok(v) = std::env::var("WEB_HOST") {
+            cfg.web_server.host = v;
+        }
+        if let Ok(v) = std::env::var("WEB_PORT") {
+            if let Ok(p) = v.parse::<u16>() {
+                cfg.web_server.port = p;
+            }
+        }
+
+        // WebSocket
+        if let Ok(v) = std::env::var("WS_HOST") {
+            cfg.websocket.host = v;
+        }
+        if let Ok(v) = std::env::var("WS_PORT") {
+            if let Ok(p) = v.parse::<u16>() {
+                cfg.websocket.port = p;
+            }
+        }
+
+        // Shared Memory
+        if let Ok(v) = std::env::var("SHM_NAME") {
+            cfg.shared_memory_name = v;
+        }
+
+        // Storage
+        if let Ok(v) = std::env::var("DATA_DIR") {
+            cfg.storage.data_dir = v;
+        }
+        if let Ok(v) = std::env::var("FILE_PREFIX") {
+            cfg.storage.default_prefix = v;
+        }
+        if let Ok(v) = std::env::var("FILE_EXT") {
+            // 自动补 '.' 前缀
+            cfg.storage.default_ext = if v.starts_with('.') { v } else { format!(".{v}") };
+        }
+        if let Ok(v) = std::env::var("MAX_FILES") {
+            if let Ok(n) = v.parse::<usize>() {
+                cfg.storage.max_files = n;
+            }
+        }
+
+        Ok(cfg)
     }
 }

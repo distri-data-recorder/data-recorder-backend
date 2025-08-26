@@ -1,32 +1,37 @@
-use crate::config::WebSocketConfig;
 use crate::data_processing::ProcessedData;
+use crate::config::WebSocketConfig;
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, mpsc, RwLock, watch};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 pub struct WebSocketServer {
     config: WebSocketConfig,
     clients: Arc<RwLock<HashMap<String, ClientConnection>>>,
     data_receiver: broadcast::Receiver<ProcessedData>,
+    pub client_count_rx: watch::Receiver<usize>,
+    client_count_tx: watch::Sender<usize>,
 }
 
 struct ClientConnection {
-    id: String,
-    sender: tokio::sync::mpsc::UnboundedSender<Message>,
+    sender: mpsc::UnboundedSender<Message>,
 }
 
 impl WebSocketServer {
     pub fn new(config: WebSocketConfig, data_receiver: broadcast::Receiver<ProcessedData>) -> Self {
+        let clients = Arc::new(RwLock::new(HashMap::new()));
+        let (tx, rx) = watch::channel(0usize);
         Self {
             config,
-            clients: Arc::new(RwLock::new(HashMap::new())),
+            clients,
             data_receiver,
+            client_count_rx: rx,
+            client_count_tx: tx,
         }
     }
 
@@ -35,7 +40,7 @@ impl WebSocketServer {
         let listener = TcpListener::bind(&addr).await?;
         info!("WebSocket server listening on {}", addr);
 
-        // 启动数据广播任务
+        // 数据广播 task
         let clients_clone = Arc::clone(&self.clients);
         let mut data_rx = self.data_receiver.resubscribe();
         tokio::spawn(async move {
@@ -45,137 +50,113 @@ impl WebSocketServer {
         });
 
         // 接受客户端连接
-        while let Ok((stream, addr)) = listener.accept().await {
+        loop {
+            let (stream, addr) = listener.accept().await?;
             info!("New WebSocket connection from {}", addr);
 
             let clients = Arc::clone(&self.clients);
+            let tx_count = self.client_count_tx.clone();
             tokio::spawn(async move {
-                if let Err(e) = Self::handle_connection(stream, clients).await {
+                if let Err(e) = Self::handle_connection(stream, clients, tx_count).await {
                     error!("WebSocket connection error: {}", e);
                 }
             });
         }
-
-        Ok(())
     }
 
     async fn handle_connection(
         stream: TcpStream,
         clients: Arc<RwLock<HashMap<String, ClientConnection>>>,
+        client_count_tx: watch::Sender<usize>,
     ) -> Result<()> {
         let ws_stream = accept_async(stream).await?;
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
         let client_id = Uuid::new_v4().to_string();
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel();
 
-        // 添加客户端到连接列表
+        // 添加到连接表
         {
-            let mut clients_guard = clients.write().await;
-            clients_guard.insert(client_id.clone(), ClientConnection {
-                id: client_id.clone(),
-                sender: tx.clone(),
-            });
+            let mut g = clients.write().await;
+            g.insert(
+                client_id.clone(),
+                ClientConnection { sender: tx.clone() },
+            );
+            let _ = client_count_tx.send(g.len());
         }
 
         info!("Client {} connected", client_id);
 
-        // 发送欢迎消息
-        let welcome_msg = serde_json::json!({
+        // 欢迎消息
+        let welcome = serde_json::json!({
             "type": "welcome",
             "client_id": client_id,
             "timestamp": chrono::Utc::now().timestamp_millis()
         });
-
-        if let Ok(msg_text) = serde_json::to_string(&welcome_msg) {
-            let _ = tx.send(Message::Text(msg_text));
+        if let Ok(t) = serde_json::to_string(&welcome) {
+            let _ = tx.send(Message::Text(t));
         }
 
-        // 处理发送任务
+        // 发送任务
         let clients_for_sender = Arc::clone(&clients);
         let client_id_for_sender = client_id.clone();
+        let client_count_tx_sender = client_count_tx.clone();
         let sender_task = tokio::spawn(async move {
-            while let Some(message) = rx.recv().await {
-                if let Err(e) = ws_sender.send(message).await {
-                    error!("Failed to send message to client {}: {}", client_id_for_sender, e);
+            while let Some(msg) = rx.recv().await {
+                if let Err(e) = ws_sender.send(msg).await {
+                    error!(
+                        "Failed to send message to client {}: {}",
+                        client_id_for_sender, e
+                    );
                     break;
                 }
             }
-
-            // 清理客户端连接
-            let mut clients_guard = clients_for_sender.write().await;
-            clients_guard.remove(&client_id_for_sender);
+            let mut g = clients_for_sender.write().await;
+            g.remove(&client_id_for_sender);
+            let _ = client_count_tx_sender.send(g.len());
             info!("Client {} disconnected", client_id_for_sender);
         });
 
-        // 处理接收任务
+        // 接收任务
         let receiver_task = tokio::spawn(async move {
             while let Some(msg) = ws_receiver.next().await {
                 match msg {
                     Ok(Message::Text(text)) => {
-                        debug!("Received message from {}: {}", client_id, text);
-                        // 处理客户端消息（如果需要）
+                        debug!("Client {} -> {}", client_id, text);
                         if let Err(e) = Self::handle_client_message(&client_id, &text).await {
-                            warn!("Error handling message from {}: {}", client_id, e);
+                            warn!("handle_client_message error: {}", e);
                         }
                     }
                     Ok(Message::Close(_)) => {
                         info!("Client {} requested close", client_id);
                         break;
                     }
-                    Ok(Message::Ping(_data)) => {
-                        debug!("Ping from client {}", client_id);
-                        // Pong will be sent automatically
-                    }
-                    Ok(Message::Pong(_)) => {
-                        debug!("Pong from client {}", client_id);
+                    Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {
+                        debug!("Ping/Pong {}", client_id);
                     }
                     Ok(Message::Binary(_)) => {
-                        warn!("Received binary message from {}, ignoring", client_id);
+                        warn!("Binary message ignored from {}", client_id);
                     }
                     Ok(Message::Frame(_)) => {
-                        // Handle raw frame messages (usually not needed in application code)
-                        debug!("Received frame message from {}", client_id);
+                        debug!("Frame from {}", client_id);
                     }
                     Err(e) => {
-                        error!("WebSocket error for client {}: {}", client_id, e);
+                        error!("WebSocket error for {}: {}", client_id, e);
                         break;
                     }
                 }
             }
         });
 
-        // 等待任一任务完成
         tokio::select! {
             _ = sender_task => {},
             _ = receiver_task => {},
         }
-
         Ok(())
     }
 
-    async fn handle_client_message(client_id: &str, message: &str) -> Result<()> {
-        // 解析客户端消息
-        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(message) {
-            match msg.get("type").and_then(|t| t.as_str()) {
-                Some("ping") => {
-                    debug!("Ping from client {}", client_id);
-                    // 可以发送pong响应
-                }
-                Some("subscribe") => {
-                    info!("Client {} subscribed to data stream", client_id);
-                    // 客户端订阅数据流
-                }
-                Some("unsubscribe") => {
-                    info!("Client {} unsubscribed from data stream", client_id);
-                    // 客户端取消订阅
-                }
-                _ => {
-                    debug!("Unknown message type from client {}: {}", client_id, message);
-                }
-            }
-        }
-
+    async fn handle_client_message(_client_id: &str, _message: &str) -> Result<()> {
+        // 可实现订阅过滤/控制指令等
         Ok(())
     }
 
@@ -183,7 +164,7 @@ impl WebSocketServer {
         clients: &Arc<RwLock<HashMap<String, ClientConnection>>>,
         data: &ProcessedData,
     ) {
-        let message = serde_json::json!({
+        let payload = serde_json::json!({
             "type": "data",
             "timestamp": data.timestamp,
             "sequence": data.sequence,
@@ -193,20 +174,16 @@ impl WebSocketServer {
             "metadata": data.metadata
         });
 
-        if let Ok(msg_text) = serde_json::to_string(&message) {
-            let clients_guard = clients.read().await;
-            let mut failed_clients = Vec::new();
-
-            for (client_id, client) in clients_guard.iter() {
-                if let Err(_) = client.sender.send(Message::Text(msg_text.clone())) {
-                    failed_clients.push(client_id.clone());
+        if let Ok(text) = serde_json::to_string(&payload) {
+            let g = clients.read().await;
+            let mut drop_ids: Vec<String> = Vec::new();
+            for (id, c) in g.iter() {
+                if c.sender.send(Message::Text(text.clone())).is_err() {
+                    drop_ids.push(id.clone());
                 }
             }
-
-            // 清理失败的连接将在发送任务中处理
-            if !failed_clients.is_empty() {
-                debug!("Failed to send to {} clients", failed_clients.len());
-            }
+            // 保留注释：sender_task 会在发送失败时清理，这里显式 drop 掉临时变量以消告警
+            drop(drop_ids);
         }
     }
 }

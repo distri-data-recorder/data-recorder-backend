@@ -1,11 +1,11 @@
-use crate::ipc::{SharedMemoryReader, ADCDataPacket};
+use crate::ipc::{ADCDataPacket, SharedMemoryReader};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use tokio::time::{interval, Duration};
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessedData {
@@ -41,7 +41,6 @@ pub struct DataProcessor {
 impl DataProcessor {
     pub fn new(shared_mem: SharedMemoryReader) -> Self {
         let (tx, _) = broadcast::channel(1000);
-
         Self {
             shared_mem: Arc::new(RwLock::new(shared_mem)),
             processed_data_tx: tx,
@@ -56,13 +55,13 @@ impl DataProcessor {
 
     pub async fn run(&mut self) -> Result<()> {
         info!("Starting data processing loop");
-
-        let mut interval = interval(Duration::from_millis(10));
+        // 按配置可调（此处用默认 10ms），与 main/config 对齐
+        let mut tick = interval(Duration::from_millis(10));
 
         loop {
-            interval.tick().await;
+            tick.tick().await;
 
-            // 读取新的数据包
+            // 读取新的数据包（批量）
             let new_packets = {
                 let mut reader = self.shared_mem.write().await;
                 reader.read_new_packets()?
@@ -71,17 +70,14 @@ impl DataProcessor {
             if !new_packets.is_empty() {
                 debug!("Received {} new packets", new_packets.len());
 
-                // 添加到缓冲区
                 for packet in new_packets {
                     self.buffer.push_back(packet);
                     self.packet_count += 1;
                 }
 
-                // 处理缓冲区中的数据
                 self.process_buffered_data().await?;
             }
 
-            // 清理过期数据
             self.cleanup_old_data();
         }
     }
@@ -91,56 +87,54 @@ impl DataProcessor {
             let start_time = std::time::Instant::now();
 
             match self.process_single_packet(&packet).await {
-                Ok(processed) => {
-                    let processing_time = start_time.elapsed().as_micros() as u64;
+                Ok(mut processed) => {
+                    processed.metadata.processing_time_us =
+                        start_time.elapsed().as_micros() as u64;
 
-                    let mut processed_with_timing = processed;
-                    processed_with_timing.metadata.processing_time_us = processing_time;
-
-                    // 发送处理后的数据
-                    if let Err(e) = self.processed_data_tx.send(processed_with_timing) {
-                        warn!("Failed to send processed data: {}", e);
+                    if let Err(e) = self.processed_data_tx.send(processed) {
+                        warn!("Failed to broadcast processed data: {}", e);
                     }
                 }
                 Err(e) => {
-                    error!("Failed to process packet {}: {}", packet.sequence, e);
+                    error!(
+                        "Failed to process packet seq={} len={}: {}",
+                        packet.sequence, packet.payload_len, e
+                    );
                 }
             }
         }
-
         Ok(())
     }
 
     async fn process_single_packet(&self, packet: &ADCDataPacket) -> Result<ProcessedData> {
-        // 基本的数据解析和处理
-        let payload = &packet.payload[..packet.payload_len as usize];
+        // 从固定数组中按 payload_len 截断有效数据
+        let payload_len = packet.payload_len as usize;
+        let payload = &packet.payload[..payload_len.min(packet.payload.len())];
 
-        // 假设ADC数据是16位整数，小端序
-        let mut samples = Vec::new();
-        for chunk in payload.chunks_exact(2) {
-            if chunk.len() == 2 {
-                let raw_value = u16::from_le_bytes([chunk[0], chunk[1]]);
-                // 转换为电压值（假设3.3V参考电压，12位ADC）
-                let voltage = (raw_value as f64 / 4095.0) * 3.3;
-                samples.push(voltage);
-            }
+        // 假设单通道 16bit little-endian 原始样本
+        let mut samples = Vec::with_capacity(payload.len() / 2);
+        for ch in payload.chunks_exact(2) {
+            let raw = u16::from_le_bytes([ch[0], ch[1]]);
+            // 12bit ADC 映射 0..4095 -> 0..3.3V（如需双极性可调整）
+            let volt = (raw as f64 / 4095.0) * 3.3;
+            samples.push(volt);
         }
 
-        // 数据质量检查
+        // 质量评估
         let quality = self.assess_data_quality(&samples);
 
-        // 应用简单的滤波（移动平均）
-        let filtered_samples = self.apply_moving_average(&samples, 5);
+        // 简单移动平均（窗口=5）
+        let filtered = self.apply_moving_average(&samples, 5);
 
         Ok(ProcessedData {
             timestamp: packet.timestamp_ms as u64,
             sequence: packet.sequence,
-            channel_count: 1, // 假设单通道
-            sample_rate: 1000.0, // 假设1kHz采样率
-            data: filtered_samples,
+            channel_count: 1,
+            sample_rate: 1000.0, // 若有真实速率，可从配置/协议里带出
+            data: filtered,
             metadata: DataMetadata {
                 packet_count: self.packet_count as u32,
-                processing_time_us: 0, // 将在调用处设置
+                processing_time_us: 0,
                 data_quality: quality,
             },
         })
@@ -148,55 +142,47 @@ impl DataProcessor {
 
     fn assess_data_quality(&self, samples: &[f64]) -> DataQuality {
         if samples.is_empty() {
-            return DataQuality::Error("No data samples".to_string());
+            return DataQuality::Error("No data samples".into());
         }
-
-        // 检查数据范围
-        let min_val = samples.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-        let max_val = samples.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-
-        if min_val < 0.0 || max_val > 3.3 {
-            return DataQuality::Warning("Data out of expected range".to_string());
+        // 简单规则：电压必须在 0..3.3V 内，否则警告
+        let mut min_v = f64::INFINITY;
+        let mut max_v = f64::NEG_INFINITY;
+        for &v in samples {
+            if v < min_v {
+                min_v = v;
+            }
+            if v > max_v {
+                max_v = v;
+            }
         }
-
-        // 检查数据变化
-        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
-        let variance = samples.iter()
-            .map(|x| (x - mean).powi(2))
-            .sum::<f64>() / samples.len() as f64;
-
-        if variance < 1e-6 {
-            return DataQuality::Warning("Data appears to be constant".to_string());
+        if min_v < -0.1 || max_v > 3.4 {
+            DataQuality::Warning(format!("Out-of-range: [{:.3}, {:.3}]", min_v, max_v))
+        } else {
+            DataQuality::Good
         }
-
-        DataQuality::Good
     }
 
-    fn apply_moving_average(&self, samples: &[f64], window_size: usize) -> Vec<f64> {
-        if samples.len() < window_size {
-            return samples.to_vec();
+    fn apply_moving_average(&self, data: &[f64], win: usize) -> Vec<f64> {
+        if win <= 1 || data.len() < win {
+            return data.to_vec();
         }
-
-        let mut filtered = Vec::with_capacity(samples.len());
-
-        for i in 0..samples.len() {
-            let start = if i >= window_size / 2 { i - window_size / 2 } else { 0 };
-            let end = std::cmp::min(start + window_size, samples.len());
-
-            let sum: f64 = samples[start..end].iter().sum();
-            let avg = sum / (end - start) as f64;
-            filtered.push(avg);
+        let mut out = Vec::with_capacity(data.len());
+        let mut acc = 0.0;
+        for i in 0..data.len() {
+            acc += data[i];
+            if i >= win {
+                acc -= data[i - win];
+            }
+            if i + 1 >= win {
+                out.push(acc / win as f64);
+            } else {
+                out.push(data[i]);
+            }
         }
-
-        filtered
+        out
     }
 
     fn cleanup_old_data(&mut self) {
-        // 保持缓冲区大小在合理范围内
-        const MAX_BUFFER_SIZE: usize = 100;
-
-        while self.buffer.len() > MAX_BUFFER_SIZE {
-            self.buffer.pop_front();
-        }
+        // 这里暂时无需要清理的过期数据；若引入时间窗口缓存可在此清理
     }
 }
