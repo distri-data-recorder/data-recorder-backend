@@ -5,54 +5,64 @@
 #include <windows.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
-// IPC配置
-#define IPC_PIPE_NAME "\\\\.\\pipe\\data_reader_ipc"
-#define IPC_BUFFER_SIZE 8192
-#define IPC_MAX_MESSAGE_SIZE 4096
+// ---------- 配置 ----------
+#define IPC_PIPE_NAME         "\\\\.\\pipe\\data_reader_ipc"
+#define IPC_BUFFER_SIZE       8192
+#define IPC_MAX_MESSAGE_SIZE  4096
 
-// IPC消息类型 - data-processor -> data-reader
-typedef enum {
-    IPC_MSG_FORWARD_TO_DEVICE = 1,
-    IPC_MSG_SET_READER_MODE,
-    IPC_MSG_REQUEST_READER_STATUS
-} IPCMessageType_FromProcessor;
-
-// IPC消息类型 - data-reader -> data-processor  
-typedef enum {
-    IPC_MSG_READER_STATUS_UPDATE = 1,
-    IPC_MSG_DEVICE_FRAME_RECEIVED,
-    IPC_MSG_DEVICE_LOG_RECEIVED,
-    IPC_MSG_COMMAND_RESPONSE
-} IPCMessageType_ToProcessor;
-
-// IPC连接状态
+// ---------- 状态 ----------
 typedef enum {
     IPC_STATE_DISCONNECTED = 0,
     IPC_STATE_LISTENING,
     IPC_STATE_CONNECTED
 } IPCState;
 
-// IPC管理器
-typedef struct {
-    HANDLE hPipe;
-    IPCState state;
-    char readBuffer[IPC_BUFFER_SIZE];
-    DWORD bytesInBuffer;
-    bool initialized;
-} IPCManager;
-
-// 回调函数类型
+// ---------- 回调 ----------
+// 回调在“IPC后台线程”中被调用；如需改共享状态，请自行加锁
 typedef void (*IPCMessageCallback)(const char* messageType, const char* payload, void* userData);
 
-// IPC函数声明
+// ---------- 管理器 ----------
+typedef struct {
+    HANDLE   hPipe;
+    IPCState state;
+    char     readBuffer[IPC_BUFFER_SIZE];
+    DWORD    bytesInBuffer;
+    bool     initialized;
+
+    // 线程化 IPC
+    HANDLE   hThread;        // 工作线程
+    HANDLE   hStopEvent;     // 通知线程安全退出
+    IPCMessageCallback threadCb;
+    void*    threadUser;
+} IPCManager;
+
+// ---------- API ----------
+// 初始化/清理
 bool initIPC(IPCManager* ipc);
 void cleanupIPC(IPCManager* ipc);
+
+// 兼容旧接口：现在不再从主循环里轮询；保留以便不改调用方
 bool processIPCMessages(IPCManager* ipc, IPCMessageCallback callback, void* userData);
+
+// 发送一条消息（自动在末尾追加'\n'）
 bool sendIPCMessage(IPCManager* ipc, const char* messageType, const char* payload);
 
-// JSON辅助函数
-bool parseIPCMessage(const char* jsonLine, char* messageType, char* payload, char* messageId, char* timestamp);
-bool buildIPCMessage(const char* messageType, const char* payload, char* output, size_t outputSize);
+// 启停后台线程
+bool startIPCThread(IPCManager* ipc, IPCMessageCallback callback, void* userData);
+void stopIPCThread(IPCManager* ipc);
+
+// JSON 辅助（宽松实现：仅需能取出 type 与 payload）
+bool parseIPCMessage(const char* jsonLine,
+                     char* messageType,     // out
+                     char* payload,         // out
+                     char* messageId,       // out，可为NULL
+                     char* timestamp);      // out，可为NULL
+
+bool buildIPCMessage(const char* messageType,
+                     const char* payload,   // 允许 NULL 或 ""
+                     char* output,
+                     size_t outputSize);
 
 #endif // IPC_COMMUNICATION_H

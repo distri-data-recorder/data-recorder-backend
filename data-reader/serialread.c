@@ -22,7 +22,7 @@
 // System Control Commands (0x00-0x0F)
 #define CMD_PING                    0x01
 #define CMD_PONG                    0x81
-#define CMD_GET_STATUS              0x02  
+#define CMD_GET_STATUS              0x02
 #define CMD_STATUS_RESPONSE         0x82
 #define CMD_GET_DEVICE_INFO         0x03
 #define CMD_DEVICE_INFO_RESPONSE    0x83
@@ -103,7 +103,6 @@ static volatile bool g_running = true;
 static SharedMemManager g_sharedMem = {0};
 static IPCManager       g_ipc = {0};
 
-
 static bool send_command(uint8_t commandID, const uint8_t* payload, uint16_t payloadLen);
 
 // ===================== IPC Message Handlers =====================
@@ -112,7 +111,7 @@ static void handleForwardToDevice(const char* payload) {
     printf("[IPC] Forward to device command received\n");
     // TODO: 解析payload中的command_id和data字段
     // 示例payload: {"command_id":"0x03","data":"Base64EncodedData"}
-    
+
     // 简化实现：如果收到FORWARD_TO_DEVICE，发送设备信息查询
     if (strstr(payload, "0x03")) {
         printf("[IPC] Forwarding GET_DEVICE_INFO command to device\n");
@@ -127,23 +126,24 @@ static void handleSetReaderMode(const char* payload) {
 
 static void handleRequestReaderStatus(const char* payload) {
     printf("[IPC] Reader status requested\n");
-    
+
     // 构建状态响应JSON
     char statusPayload[1024];
     snprintf(statusPayload, sizeof(statusPayload),
              "{\"mode\":\"%s\",\"target\":\"%s\",\"device_connected\":%s,\"device_id\":\"%016llX\",\"data_transmission\":%s}",
              g_conn.type == CONN_TYPE_SERIAL ? "serial" : "socket",
-             g_conn.type == CONN_TYPE_SERIAL ? "COM7" : "127.0.0.1:9001", 
+             g_conn.type == CONN_TYPE_SERIAL ? "COM7" : "127.0.0.1:9001",
              g_deviceConnected ? "true" : "false",
              (unsigned long long)g_deviceUniqueId,
              g_dataTransmissionOn ? "true" : "false");
-    
+
     sendIPCMessage(&g_ipc, "READER_STATUS_UPDATE", statusPayload);
 }
 
 static void onIPCMessage(const char* messageType, const char* payload, void* userData) {
+    (void)userData;
     printf("[IPC] Received: %s\n", messageType);
-    
+
     if (strcmp(messageType, "FORWARD_TO_DEVICE") == 0) {
         handleForwardToDevice(payload);
     } else if (strcmp(messageType, "SET_READER_MODE") == 0) {
@@ -162,19 +162,19 @@ static void notifyDeviceFrameReceived(uint8_t cmd, uint8_t seq, const uint8_t* p
     if (cmd == CMD_DATA_PACKET) {
         return; // 数据包直接写入共享内存，不通过IPC
     }
-    
+
     char framePayload[2048];
     char base64Data[1024] = {0};
-    
+
     // 简化的Base64编码（实际项目中应使用专业的Base64库）
     if (payloadLen > 0) {
         strcpy(base64Data, "Base64PlaceholderData");
     }
-    
+
     snprintf(framePayload, sizeof(framePayload),
              "{\"command_id\":\"0x%02X\",\"seq\":%u,\"payload_len\":%u,\"data\":\"%s\"}",
              cmd, seq, payloadLen, base64Data);
-    
+
     sendIPCMessage(&g_ipc, "DEVICE_FRAME_RECEIVED", framePayload);
 }
 
@@ -183,7 +183,7 @@ static void notifyDeviceLogReceived(const char* level, const char* message) {
     snprintf(logPayload, sizeof(logPayload),
              "{\"level\":\"%s\",\"message\":\"%s\"}",
              level, message);
-    
+
     sendIPCMessage(&g_ipc, "DEVICE_LOG_RECEIVED", logPayload);
 }
 
@@ -347,7 +347,7 @@ static bool open_socket_connection(const char* host, const char* port)
     // Connect to server
     result = connect(connectSocket, addrResult->ai_addr, (int)addrResult->ai_addrlen);
     freeaddrinfo(addrResult);
-    
+
     if (result == SOCKET_ERROR) {
         printf("connect failed: %d\n", WSAGetLastError());
         closesocket(connectSocket);
@@ -418,7 +418,6 @@ static bool send_command(uint8_t commandID, const uint8_t* payload, uint16_t pay
 }
 
 // ===================== File Operations =====================
-// (保持之前的文件操作函数不变，代码太长省略...)
 
 static bool open_next_file(void)
 {
@@ -492,7 +491,7 @@ static void handle_pong_response(uint8_t seq, const uint8_t* payload, uint16_t p
         printf("Invalid payload length %u (expected 8)", payloadLen);
     }
     printf("\n");
-    
+
     // 通知IPC客户端
     notifyDeviceFrameReceived(CMD_PONG, seq, payload, payloadLen);
 }
@@ -517,25 +516,25 @@ static void handle_device_info_response(uint8_t seq, const uint8_t* payload, uin
 
     for (uint8_t ch = 0; ch < num_channels && offset < payloadLen; ch++) {
         if (offset + 8 > payloadLen) break;
-        
+
         uint8_t channel_id = payload[offset++];
         uint32_t max_rate = *(uint32_t*)(payload + offset);
         offset += 4;
         uint16_t formats = *(uint16_t*)(payload + offset);
         offset += 2;
         uint8_t name_len = payload[offset++];
-        
+
         if (offset + name_len > payloadLen) break;
-        
+
         printf("  Channel %u: %.*s, Max Rate: %u Hz, Formats: 0x%04X\n",
                channel_id, name_len, (char*)(payload + offset), max_rate, formats);
         offset += name_len;
     }
 
-    snprintf(g_deviceInfo, sizeof(g_deviceInfo), 
-             "Protocol V%u, FW v%u.%u, %u channels", 
+    snprintf(g_deviceInfo, sizeof(g_deviceInfo),
+             "Protocol V%u, FW v%u.%u, %u channels",
              protocol_version, fw_version >> 8, fw_version & 0xFF, num_channels);
-    
+
     // 通知IPC客户端
     notifyDeviceFrameReceived(CMD_DEVICE_INFO_RESPONSE, seq, payload, payloadLen);
 }
@@ -548,60 +547,59 @@ static void handle_status_response(uint8_t seq, const uint8_t* payload, uint16_t
         uint8_t stream_status = payload[1];
         uint8_t error_flag = payload[2];
         uint8_t error_code = payload[3];
-        
-        printf("Mode=%s, Stream=%s", 
+
+        printf("Mode=%s, Stream=%s",
                mode == 0 ? "Continuous" : "Trigger",
                stream_status == 1 ? "Running" : "Stopped");
-        
+
         if (error_flag) {
             printf(", Error=0x%02X", error_code);
         }
-        
+
         g_dataTransmissionOn = (stream_status == 1);
     }
     printf("\n");
-    
+
     // 通知IPC客户端
     notifyDeviceFrameReceived(CMD_STATUS_RESPONSE, seq, payload, payloadLen);
 }
 
 static void handle_data_packet(uint8_t seq, const uint8_t* payload, uint16_t payloadLen)
 {
+    (void)seq;
     g_dataPacketCount++;
-    
+
     if (payloadLen < 8) {
-        printf("[RECV] Invalid Data Packet #%u (seq=%u, len=%u)\n", 
-               g_dataPacketCount, seq, payloadLen);
+        printf("[RECV] Invalid Data Packet #%u (len=%u)\n",
+               g_dataPacketCount, payloadLen);
         return;
     }
 
     uint32_t timestamp = *(uint32_t*)payload;
     uint16_t channel_mask = *(uint16_t*)(payload + 4);
     uint16_t sample_count = *(uint16_t*)(payload + 6);
-    
-    printf("[RECV] Data Packet #%u (seq=%u): timestamp=%u, channels=0x%04X, samples=%u, len=%u\n",
-           g_dataPacketCount, seq, timestamp, channel_mask, sample_count, payloadLen);
+
+    printf("[RECV] Data Packet #%u: timestamp=%u, channels=0x%04X, samples=%u, len=%u\n",
+           g_dataPacketCount, timestamp, channel_mask, sample_count, payloadLen);
 
     // Write to shared memory
     if (g_sharedMem.initialized) {
-        if (writeADCPacket(&g_sharedMem, seq, payload, payloadLen)) {
-            // Silent success to avoid spam
-        } else {
+        if (!writeADCPacket(&g_sharedMem, seq, payload, payloadLen)) {
             printf("[SHARED_MEM] Failed to write data packet\n");
         }
     }
-    
     // 数据包不通过IPC转发，直接写入共享内存
 }
 
 static void handle_log_message(uint8_t seq, const uint8_t* payload, uint16_t payloadLen)
 {
+    (void)seq;
     printf("[DEVICE LOG] ");
     if (payloadLen >= 2) {
         uint8_t log_level = payload[0];
         uint8_t msg_len = payload[1];
         const char* levelStr = "UNKNOWN";
-        
+
         switch (log_level) {
             case 0: levelStr = "DEBUG"; break;
             case 1: levelStr = "INFO"; break;
@@ -615,7 +613,7 @@ static void handle_log_message(uint8_t seq, const uint8_t* payload, uint16_t pay
             memcpy(message, payload + 2, msg_len);
             message[msg_len] = '\0';
             printf("%s", message);
-            
+
             // 通知IPC客户端
             notifyDeviceLogReceived(levelStr, message);
         }
@@ -635,10 +633,10 @@ static void handle_event_triggered(uint8_t seq, const uint8_t* payload, uint16_t
         }
     }
     printf("\n");
-    
+
     // 通知IPC客户端
     notifyDeviceFrameReceived(CMD_EVENT_TRIGGERED, seq, payload, payloadLen);
-    
+
     // Automatically request buffered data
     printf("Requesting buffered trigger data...\n");
     send_command(CMD_REQUEST_BUFFERED_DATA, NULL, 0);
@@ -719,7 +717,7 @@ static void print_help(void)
 static void print_status(void)
 {
     printf("\n=== Current Status ===\n");
-    printf("Connection: %s (%s)\n", 
+    printf("Connection: %s (%s)\n",
            g_conn.connected ? "CONNECTED" : "DISCONNECTED",
            g_conn.type == CONN_TYPE_SERIAL ? "Serial" : "Socket");
     printf("IPC: %s\n", g_ipc.state == IPC_STATE_CONNECTED ? "CONNECTED" : "LISTENING");
@@ -741,19 +739,19 @@ static void send_demo_stream_config(void)
 {
     uint8_t config_payload[13];
     uint16_t offset = 0;
-    
+
     config_payload[offset++] = 2;
-    
+
     config_payload[offset++] = 0;
     *(uint32_t*)(config_payload + offset) = 10000;
     offset += 4;
     config_payload[offset++] = 0x01;
-    
+
     config_payload[offset++] = 1;
     *(uint32_t*)(config_payload + offset) = 10000;
     offset += 4;
     config_payload[offset++] = 0x01;
-    
+
     printf("Sending stream configuration (2 channels @ 10kHz, int16)...\n");
     send_command(CMD_CONFIGURE_STREAM, config_payload, offset);
 }
@@ -812,7 +810,7 @@ static bool handle_user_input(void)
 static void communication_loop(void)
 {
     uint8_t buf[10000];
-    
+
     initRxBuffer(&g_rx);
 
     printf("Communication started (Protocol V6). Press 'h' for help.\n");
@@ -833,8 +831,8 @@ static void communication_loop(void)
             break;
         }
 
-        // 处理IPC消息
-        processIPCMessages(&g_ipc, onIPCMessage, NULL);
+        // (已移除) 处理IPC消息由后台线程完成
+        // processIPCMessages(&g_ipc, onIPCMessage, NULL);
 
         // 处理用户输入
         if (handle_user_input()) {
@@ -934,6 +932,10 @@ int main(int argc, char* argv[])
     // Initialize IPC
     if (initIPC(&g_ipc)) {
         printf("IPC initialized successfully.\n");
+        // ★ 启动后台 IPC 线程（回调在后台线程里执行）
+        if (!startIPCThread(&g_ipc, onIPCMessage, NULL)) {
+            printf("Warning: Failed to start IPC thread.\n");
+        }
     } else {
         printf("Warning: Failed to initialize IPC.\n");
     }
@@ -951,6 +953,8 @@ int main(int argc, char* argv[])
     if (!connected) {
         if (g_fp) fclose(g_fp);
         cleanupSharedMemory(&g_sharedMem);
+        // 停止线程并清理 IPC
+        stopIPCThread(&g_ipc);
         cleanupIPC(&g_ipc);
         return 1;
     }
@@ -962,6 +966,9 @@ int main(int argc, char* argv[])
     conn_close();
     if (g_fp) fclose(g_fp);
     cleanupSharedMemory(&g_sharedMem);
+
+    // ★ 退出前先停线程，再清理 IPC
+    stopIPCThread(&g_ipc);
     cleanupIPC(&g_ipc);
 
     if (useSocket) {
