@@ -3,7 +3,7 @@ TARGET     := serialread
 VERSION    := 1.0
 
 # 源文件和包含目录
-SRCS       := serialread.c protocol/protocol.c protocol/io_buffer.c shared_memory.c
+SRCS       := serialread.c protocol/protocol.c protocol/io_buffer.c shared_memory.c ipc_communication.c
 INC_DIRS   := protocol
 CC         := gcc
 
