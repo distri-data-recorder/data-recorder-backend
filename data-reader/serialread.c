@@ -1,8 +1,10 @@
+#include <winsock2.h>
 #include <windows.h>
+#include <ws2tcpip.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <conio.h>      // _kbhit/_getch
+#include <conio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -11,58 +13,80 @@
 #include "protocol.h"
 #include "shared_memory.h"
 
-// ===================== Command ID Definitions =====================
-// Status and Parameter Commands (PC -> Device: 0x00-0x7F)
-#define CMD_REQUEST_DEVICE_STATUS       0x10
-#define CMD_SET_DEVICE_PARAMETERS       0x11
-#define CMD_REQUEST_DEVICE_PARAMETERS   0x12
+#ifdef _WIN32
+#pragma comment(lib, "ws2_32.lib")
+#endif
 
-// Control Commands (PC -> Device)
-#define CMD_START_DATA_TRANSMISSION     0x20
-#define CMD_STOP_DATA_TRANSMISSION      0x21
-#define CMD_DEVICE_RESET                0x22
-#define CMD_PING                        0x2F
+// ===================== Protocol V6 Command Definitions =====================
+// System Control Commands (0x00-0x0F)
+#define CMD_PING                    0x01
+#define CMD_PONG                    0x81
+#define CMD_GET_STATUS              0x02  
+#define CMD_STATUS_RESPONSE         0x82
+#define CMD_GET_DEVICE_INFO         0x03
+#define CMD_DEVICE_INFO_RESPONSE    0x83
 
-// Device Responses (Device -> PC: 0x80-0xFF)
-#define CMD_DEVICE_STATUS_RESPONSE      0x90
-#define CMD_PARAMETER_SET_RESPONSE      0x91
-#define CMD_DEVICE_PARAMETERS_RESPONSE  0x92
-#define CMD_START_COMMAND_RESPONSE      0xA0
-#define CMD_STOP_COMMAND_RESPONSE       0xA1
-#define CMD_RESET_COMMAND_RESPONSE      0xA2
-#define CMD_PONG                        0xAF
+// Collection Configuration & Control (0x10-0x1F)
+#define CMD_SET_MODE_CONTINUOUS     0x10
+#define CMD_SET_MODE_TRIGGER        0x11
+#define CMD_START_STREAM            0x12
+#define CMD_STOP_STREAM             0x13
+#define CMD_CONFIGURE_STREAM        0x14
+#define CMD_ACK                     0x90
+#define CMD_NACK                    0x91
 
-// Data Transmission Commands (Device -> PC)
-#define CMD_ADC_DATA_PACKET             0x40
-#define CMD_OTHER_SENSOR_DATA           0x41
+// Data & Event Transmission (0x40-0x4F)
+#define CMD_DATA_PACKET             0x40
+#define CMD_EVENT_TRIGGERED         0x41
+#define CMD_REQUEST_BUFFERED_DATA   0x42
+#define CMD_BUFFER_TRANSFER_COMPLETE 0x4F
 
-// Logging and Debugging Commands (Device -> PC)
-#define CMD_LOG_MESSAGE                 0xE0
+// Logging (0xE0-0xEF)
+#define CMD_LOG_MESSAGE             0xE0
 
-// ===================== 配置 =====================
+// ===================== Configuration =====================
 #define DEFAULT_COM_PORT        "\\\\.\\COM7"
+#define DEFAULT_TCP_HOST        "127.0.0.1"
+#define DEFAULT_TCP_PORT        "9001"
 #define BAUDRATE                CBR_115200
 #define BYTE_SIZE               8
 #define STOP_BITS               ONESTOPBIT
 #define PARITY_MODE             NOPARITY
 
-#define FRAME_BATCH_SAVE_COUNT  500         // 内存中凑够 N 帧再写文件
-#define MAX_FRAMES_PER_FILE     50000       // 每个文件最多保存 5 万帧
+#define FRAME_BATCH_SAVE_COUNT  500
+#define MAX_FRAMES_PER_FILE     50000
 #define FILE_NAME_PATTERN       "raw_frames_%03d.txt"
 
-// ===================== 全局变量 =====================
+// ===================== Connection Types =====================
+typedef enum {
+    CONN_TYPE_SERIAL,
+    CONN_TYPE_SOCKET
+} ConnectionType;
+
+typedef struct {
+    ConnectionType type;
+    union {
+        HANDLE hSerial;
+        SOCKET socket;
+    };
+    bool connected;
+} Connection;
+
+// ===================== Global Variables =====================
 static RxBuffer_t g_rx;
 static FILE*      g_fp           = NULL;
 static int        g_fileIndex    = 0;
 static uint32_t   g_framesInFile = 0;
-static HANDLE     g_hSerial      = INVALID_HANDLE_VALUE;
+static Connection g_conn         = {0};
 static uint8_t    g_seqCounter   = 0;
 
 // Device status tracking
 static bool       g_deviceConnected     = false;
 static bool       g_dataTransmissionOn  = false;
-static uint32_t   g_adcPacketCount      = 0;
+static uint32_t   g_dataPacketCount     = 0;
 static uint32_t   g_totalFrameCount     = 0;
+static uint64_t   g_deviceUniqueId      = 0;
+static char       g_deviceInfo[512]     = {0};
 
 typedef struct {
     uint8_t* data;
@@ -74,39 +98,227 @@ static int        g_frameInBatch = 0;
 
 static volatile bool g_running = true;
 
-// 共享内存管理器
+// Shared memory manager
 static SharedMemManager g_sharedMem = {0};
 
-// ===================== 工具函数 =====================
+// ===================== Connection Management =====================
+
+static bool conn_write_data(const uint8_t* data, uint32_t length)
+{
+    if (!g_conn.connected) {
+        printf("[ERROR] Connection not established\n");
+        return false;
+    }
+
+    if (g_conn.type == CONN_TYPE_SERIAL) {
+        DWORD bytesWritten = 0;
+        BOOL ok = WriteFile(g_conn.hSerial, data, length, &bytesWritten, NULL);
+        return (ok && bytesWritten == length);
+    } else if (g_conn.type == CONN_TYPE_SOCKET) {
+        int bytesSent = send(g_conn.socket, (const char*)data, length, 0);
+        return (bytesSent == (int)length);
+    }
+    return false;
+}
+
+static int conn_read_data(uint8_t* buffer, uint32_t bufferSize)
+{
+    if (!g_conn.connected) {
+        return -1;
+    }
+
+    if (g_conn.type == CONN_TYPE_SERIAL) {
+        DWORD bytesRead = 0;
+        BOOL ok = ReadFile(g_conn.hSerial, buffer, bufferSize, &bytesRead, NULL);
+        if (!ok) {
+            DWORD err = GetLastError();
+            if (err == ERROR_OPERATION_ABORTED) return -1;
+            printf("ReadFile err=%lu\n", err);
+            return -1;
+        }
+        return (int)bytesRead;
+    } else if (g_conn.type == CONN_TYPE_SOCKET) {
+        int bytesReceived = recv(g_conn.socket, (char*)buffer, bufferSize, 0);
+        if (bytesReceived == SOCKET_ERROR) {
+            int err = WSAGetLastError();
+            if (err == WSAEWOULDBLOCK) {
+                return 0; // No data available
+            }
+            printf("recv error: %d\n", err);
+            return -1;
+        } else if (bytesReceived == 0) {
+            printf("Connection closed by remote\n");
+            return -1;
+        }
+        return bytesReceived;
+    }
+    return -1;
+}
+
+static void conn_close(void)
+{
+    if (!g_conn.connected) return;
+
+    if (g_conn.type == CONN_TYPE_SERIAL) {
+        CloseHandle(g_conn.hSerial);
+        g_conn.hSerial = INVALID_HANDLE_VALUE;
+    } else if (g_conn.type == CONN_TYPE_SOCKET) {
+        closesocket(g_conn.socket);
+        g_conn.socket = INVALID_SOCKET;
+    }
+    g_conn.connected = false;
+}
+
+// ===================== Connection Establishment =====================
+
+static bool open_serial_connection(const char* comPort)
+{
+    HANDLE h = CreateFileA(
+        comPort,
+        GENERIC_READ | GENERIC_WRITE,
+        0,
+        NULL,
+        OPEN_EXISTING,
+        0,
+        NULL
+    );
+    if (h == INVALID_HANDLE_VALUE) {
+        printf("Open %s failed, err=%lu\n", comPort, GetLastError());
+        return false;
+    }
+
+    DCB dcb = {0};
+    dcb.DCBlength = sizeof(dcb);
+    if (!GetCommState(h, &dcb)) {
+        printf("GetCommState failed\n");
+        CloseHandle(h);
+        return false;
+    }
+
+    dcb.BaudRate = BAUDRATE;
+    dcb.ByteSize = BYTE_SIZE;
+    dcb.StopBits = STOP_BITS;
+    dcb.Parity   = PARITY_MODE;
+
+    if (!SetCommState(h, &dcb)) {
+        printf("SetCommState failed\n");
+        CloseHandle(h);
+        return false;
+    }
+
+    COMMTIMEOUTS to = {0};
+    to.ReadIntervalTimeout         = 10;
+    to.ReadTotalTimeoutConstant    = 10;
+    to.ReadTotalTimeoutMultiplier  = 2;
+    to.WriteTotalTimeoutConstant   = 10;
+    to.WriteTotalTimeoutMultiplier = 2;
+    if (!SetCommTimeouts(h, &to)) {
+        printf("SetCommTimeouts failed\n");
+        CloseHandle(h);
+        return false;
+    }
+
+    PurgeComm(h, PURGE_RXCLEAR | PURGE_TXCLEAR | PURGE_RXABORT | PURGE_TXABORT);
+
+    g_conn.type = CONN_TYPE_SERIAL;
+    g_conn.hSerial = h;
+    g_conn.connected = true;
+    return true;
+}
+
+static bool open_socket_connection(const char* host, const char* port)
+{
+    // Initialize Winsock
+    WSADATA wsaData;
+    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (result != 0) {
+        printf("WSAStartup failed: %d\n", result);
+        return false;
+    }
+
+    struct addrinfo *addrResult = NULL, hints;
+    ZeroMemory(&hints, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    // Resolve server address and port
+    result = getaddrinfo(host, port, &hints, &addrResult);
+    if (result != 0) {
+        printf("getaddrinfo failed: %d\n", result);
+        WSACleanup();
+        return false;
+    }
+
+    // Create socket
+    SOCKET connectSocket = socket(addrResult->ai_family, addrResult->ai_socktype, addrResult->ai_protocol);
+    if (connectSocket == INVALID_SOCKET) {
+        printf("socket failed: %d\n", (int)WSAGetLastError());
+        freeaddrinfo(addrResult);
+        WSACleanup();
+        return false;
+    }
+
+    // Connect to server
+    result = connect(connectSocket, addrResult->ai_addr, (int)addrResult->ai_addrlen);
+    freeaddrinfo(addrResult);
+    
+    if (result == SOCKET_ERROR) {
+        printf("connect failed: %d\n", WSAGetLastError());
+        closesocket(connectSocket);
+        WSACleanup();
+        return false;
+    }
+
+    // Set socket to non-blocking mode
+    u_long mode = 1;
+    ioctlsocket(connectSocket, FIONBIO, &mode);
+
+    g_conn.type = CONN_TYPE_SOCKET;
+    g_conn.socket = connectSocket;
+    g_conn.connected = true;
+    return true;
+}
+
+// ===================== Utility Functions =====================
 
 static const char* get_command_name(uint8_t cmd)
 {
     switch (cmd) {
-        case CMD_REQUEST_DEVICE_STATUS:       return "REQUEST_DEVICE_STATUS";
-        case CMD_SET_DEVICE_PARAMETERS:       return "SET_DEVICE_PARAMETERS";
-        case CMD_REQUEST_DEVICE_PARAMETERS:   return "REQUEST_DEVICE_PARAMETERS";
-        case CMD_START_DATA_TRANSMISSION:     return "START_DATA_TRANSMISSION";
-        case CMD_STOP_DATA_TRANSMISSION:      return "STOP_DATA_TRANSMISSION";
-        case CMD_DEVICE_RESET:                return "DEVICE_RESET";
-        case CMD_PING:                        return "PING";
-        case CMD_DEVICE_STATUS_RESPONSE:      return "DEVICE_STATUS_RESPONSE";
-        case CMD_PARAMETER_SET_RESPONSE:      return "PARAMETER_SET_RESPONSE";
-        case CMD_DEVICE_PARAMETERS_RESPONSE:  return "DEVICE_PARAMETERS_RESPONSE";
-        case CMD_START_COMMAND_RESPONSE:      return "START_COMMAND_RESPONSE";
-        case CMD_STOP_COMMAND_RESPONSE:       return "STOP_COMMAND_RESPONSE";
-        case CMD_RESET_COMMAND_RESPONSE:      return "RESET_COMMAND_RESPONSE";
-        case CMD_PONG:                        return "PONG";
-        case CMD_ADC_DATA_PACKET:             return "ADC_DATA_PACKET";
-        case CMD_OTHER_SENSOR_DATA:           return "OTHER_SENSOR_DATA";
-        case CMD_LOG_MESSAGE:                 return "LOG_MESSAGE";
-        default:                              return "UNKNOWN";
+        // System Control
+        case CMD_PING:                    return "PING";
+        case CMD_PONG:                    return "PONG";
+        case CMD_GET_STATUS:              return "GET_STATUS";
+        case CMD_STATUS_RESPONSE:         return "STATUS_RESPONSE";
+        case CMD_GET_DEVICE_INFO:         return "GET_DEVICE_INFO";
+        case CMD_DEVICE_INFO_RESPONSE:    return "DEVICE_INFO_RESPONSE";
+        
+        // Collection Control
+        case CMD_SET_MODE_CONTINUOUS:     return "SET_MODE_CONTINUOUS";
+        case CMD_SET_MODE_TRIGGER:        return "SET_MODE_TRIGGER";
+        case CMD_START_STREAM:            return "START_STREAM";
+        case CMD_STOP_STREAM:             return "STOP_STREAM";
+        case CMD_CONFIGURE_STREAM:        return "CONFIGURE_STREAM";
+        case CMD_ACK:                     return "ACK";
+        case CMD_NACK:                    return "NACK";
+        
+        // Data Transmission
+        case CMD_DATA_PACKET:             return "DATA_PACKET";
+        case CMD_EVENT_TRIGGERED:         return "EVENT_TRIGGERED";
+        case CMD_REQUEST_BUFFERED_DATA:   return "REQUEST_BUFFERED_DATA";
+        case CMD_BUFFER_TRANSFER_COMPLETE: return "BUFFER_TRANSFER_COMPLETE";
+        
+        // Logging
+        case CMD_LOG_MESSAGE:             return "LOG_MESSAGE";
+        
+        default:                          return "UNKNOWN";
     }
 }
 
 static bool send_command(uint8_t commandID, const uint8_t* payload, uint16_t payloadLen)
 {
-    if (g_hSerial == INVALID_HANDLE_VALUE) {
-        printf("[ERROR] Serial port not open\n");
+    if (!g_conn.connected) {
+        printf("[ERROR] Connection not established\n");
         return false;
     }
 
@@ -119,9 +331,7 @@ static bool send_command(uint8_t commandID, const uint8_t* payload, uint16_t pay
         return false;
     }
 
-    DWORD bytesWritten = 0;
-    BOOL ok = WriteFile(g_hSerial, frameBuf, frameLen, &bytesWritten, NULL);
-    if (!ok || bytesWritten != frameLen) {
+    if (!conn_write_data(frameBuf, frameLen)) {
         printf("[ERROR] Failed to send command 0x%02X (%s)\n", commandID, get_command_name(commandID));
         return false;
     }
@@ -133,22 +343,30 @@ static bool send_command(uint8_t commandID, const uint8_t* payload, uint16_t pay
 
 static void print_usage(const char* progName)
 {
-    printf("Usage: %s [COM_NUMBER]\n", progName);
-    printf("  COM_NUMBER: COM port number (e.g., 7 for COM7)\n");
-    printf("  If not specified, defaults to COM7\n");
+    printf("Usage: %s [OPTIONS]\n", progName);
+    printf("\nConnection Options:\n");
+    printf("  %s COM_NUMBER           # Serial mode - use COMx port\n", progName);
+    printf("  %s -s [HOST] [PORT]     # Socket mode - connect to TCP server\n", progName);
+    printf("  %s                      # Default: COM7\n", progName);
     printf("\nExamples:\n");
-    printf("  %s 3      # Use COM3\n", progName);
-    printf("  %s        # Use default COM7\n", progName);
-    printf("\nInteractive Commands (during execution):\n");
+    printf("  %s 3                    # Use COM3\n", progName);
+    printf("  %s -s                   # Use TCP 127.0.0.1:9001\n", progName);
+    printf("  %s -s 192.168.1.100     # Use TCP 192.168.1.100:9001\n", progName);
+    printf("  %s -s 192.168.1.100 8080 # Use TCP 192.168.1.100:8080\n", progName);
+    printf("\nInteractive Commands (Protocol V6):\n");
     printf("  h/H     - Show help\n");
     printf("  s       - Show status\n");
     printf("  p       - Send PING\n");
-    printf("  1       - Request device status\n");
-    printf("  2       - Start data transmission\n");
-    printf("  3       - Stop data transmission\n");
-    printf("  r       - Reset device\n");
+    printf("  i       - Get device info\n");
+    printf("  1       - Set continuous mode\n");
+    printf("  2       - Set trigger mode\n");
+    printf("  3       - Start stream\n");
+    printf("  4       - Stop stream\n");
+    printf("  c       - Configure stream (demo)\n");
     printf("  ESC/q/Q - Quit program\n");
 }
+
+// ===================== File Operations =====================
 
 static bool open_next_file(void)
 {
@@ -169,16 +387,13 @@ static bool open_next_file(void)
     return true;
 }
 
-// 写批量缓存到文件
 static void flush_batch_to_file(void)
 {
     if (!g_fp) return;
 
     for (int i = 0; i < g_frameInBatch; ++i) {
-        // 如果当前文件剩余容量不足，先切文件
         if (g_framesInFile >= MAX_FRAMES_PER_FILE) {
             if (!open_next_file()) {
-                // 打不开就只能丢弃
                 free(g_frameBatch[i].data);
                 continue;
             }
@@ -197,7 +412,6 @@ static void flush_batch_to_file(void)
     g_frameInBatch = 0;
 }
 
-// 缓存一帧到内存队列
 static void cache_frame(const uint8_t* frame, uint16_t len)
 {
     uint8_t* copy = (uint8_t*)malloc(len);
@@ -213,58 +427,140 @@ static void cache_frame(const uint8_t* frame, uint16_t len)
     }
 }
 
-// 处理设备状态响应
-static void handle_device_status_response(uint8_t seq, const uint8_t* payload, uint16_t payloadLen)
+// ===================== Protocol V6 Message Handlers =====================
+// (保持与之前相同的消息处理函数)
+
+static void handle_pong_response(uint8_t seq, const uint8_t* payload, uint16_t payloadLen)
 {
-    printf("[RECV] Device Status Response (seq=%u): ", seq);
-    if (payloadLen > 0) {
-        printf("Status=0x%02X", payload[0]);
-        if (payloadLen > 1) {
-            printf(" Data:");
-            for (uint16_t i = 1; i < payloadLen; i++) {
-                printf(" %02X", payload[i]);
-            }
-        }
+    printf("[RECV] PONG Response (seq=%u): ", seq);
+    if (payloadLen >= 8) {
+        g_deviceUniqueId = *(uint64_t*)payload;
+        printf("Device ID=0x%016llX", (unsigned long long)g_deviceUniqueId);
+        g_deviceConnected = true;
+    } else {
+        printf("Invalid payload length %u (expected 8)", payloadLen);
     }
     printf("\n");
-    g_deviceConnected = true;
 }
 
-// 处理ADC数据包
-static void handle_adc_data_packet(uint8_t seq, const uint8_t* payload, uint16_t payloadLen)
+static void handle_device_info_response(uint8_t seq, const uint8_t* payload, uint16_t payloadLen)
 {
-    g_adcPacketCount++;
-    printf("[RECV] ADC Data Packet #%u (seq=%u, len=%u): ", g_adcPacketCount, seq, payloadLen);
-
-    // 显示前几个字节的数据
-    uint16_t displayLen = (payloadLen > 16) ? 16 : payloadLen;
-    for (uint16_t i = 0; i < displayLen; i++) {
-        printf("%02X ", payload[i]);
+    printf("[RECV] Device Info Response (seq=%u):\n", seq);
+    if (payloadLen < 4) {
+        printf("  Invalid payload length\n");
+        return;
     }
-    if (payloadLen > 16) {
-        printf("... (%u more bytes)", payloadLen - 16);
+
+    uint16_t offset = 0;
+    uint8_t protocol_version = payload[offset++];
+    uint16_t fw_version = *(uint16_t*)(payload + offset);
+    offset += 2;
+    uint8_t num_channels = payload[offset++];
+
+    printf("  Protocol Version: %u\n", protocol_version);
+    printf("  Firmware Version: v%u.%u\n", fw_version >> 8, fw_version & 0xFF);
+    printf("  Number of Channels: %u\n", num_channels);
+
+    // Parse channel capabilities
+    for (uint8_t ch = 0; ch < num_channels && offset < payloadLen; ch++) {
+        if (offset + 8 > payloadLen) break;
+        
+        uint8_t channel_id = payload[offset++];
+        uint32_t max_rate = *(uint32_t*)(payload + offset);
+        offset += 4;
+        uint16_t formats = *(uint16_t*)(payload + offset);
+        offset += 2;
+        uint8_t name_len = payload[offset++];
+        
+        if (offset + name_len > payloadLen) break;
+        
+        printf("  Channel %u: %.*s, Max Rate: %u Hz, Formats: 0x%04X\n",
+               channel_id, name_len, (char*)(payload + offset), max_rate, formats);
+        offset += name_len;
+    }
+
+    snprintf(g_deviceInfo, sizeof(g_deviceInfo), 
+             "Protocol V%u, FW v%u.%u, %u channels", 
+             protocol_version, fw_version >> 8, fw_version & 0xFF, num_channels);
+}
+
+static void handle_status_response(uint8_t seq, const uint8_t* payload, uint16_t payloadLen)
+{
+    printf("[RECV] Status Response (seq=%u): ", seq);
+    if (payloadLen >= 4) {
+        uint8_t mode = payload[0];
+        uint8_t stream_status = payload[1];
+        uint8_t error_flag = payload[2];
+        uint8_t error_code = payload[3];
+        
+        printf("Mode=%s, Stream=%s", 
+               mode == 0 ? "Continuous" : "Trigger",
+               stream_status == 1 ? "Running" : "Stopped");
+        
+        if (error_flag) {
+            printf(", Error=0x%02X", error_code);
+        }
+        
+        g_dataTransmissionOn = (stream_status == 1);
     }
     printf("\n");
+}
 
-    // 写入共享内存
+static void handle_data_packet(uint8_t seq, const uint8_t* payload, uint16_t payloadLen)
+{
+    g_dataPacketCount++;
+    
+    if (payloadLen < 8) {
+        printf("[RECV] Invalid Data Packet #%u (seq=%u, len=%u)\n", 
+               g_dataPacketCount, seq, payloadLen);
+        return;
+    }
+
+    // Parse data packet header
+    uint32_t timestamp = *(uint32_t*)payload;
+    uint16_t channel_mask = *(uint16_t*)(payload + 4);
+    uint16_t sample_count = *(uint16_t*)(payload + 6);
+    
+    printf("[RECV] Data Packet #%u (seq=%u): timestamp=%u, channels=0x%04X, samples=%u, len=%u\n",
+           g_dataPacketCount, seq, timestamp, channel_mask, sample_count, payloadLen);
+
+    // Write to shared memory
     if (g_sharedMem.initialized) {
         if (writeADCPacket(&g_sharedMem, seq, payload, payloadLen)) {
-            printf("[SHARED_MEM] ADC packet written (seq=%u, len=%u)\n", seq, payloadLen);
+            // Silent success to avoid spam
         } else {
-            printf("[SHARED_MEM] Failed to write ADC packet\n");
+            printf("[SHARED_MEM] Failed to write data packet\n");
         }
     }
 }
 
-// 处理日志消息
+static void handle_event_triggered(uint8_t seq, const uint8_t* payload, uint16_t payloadLen)
+{
+    printf("[RECV] Event Triggered (seq=%u): ", seq);
+    if (payloadLen >= 4) {
+        uint32_t timestamp = *(uint32_t*)payload;
+        printf("timestamp=%u", timestamp);
+        if (payloadLen >= 6) {
+            uint16_t channel = *(uint16_t*)(payload + 4);
+            printf(", channel=%u", channel);
+        }
+    }
+    printf("\n");
+    
+    // Automatically request buffered data
+    printf("Requesting buffered trigger data...\n");
+    send_command(CMD_REQUEST_BUFFERED_DATA, NULL, 0);
+}
+
 static void handle_log_message(uint8_t seq, const uint8_t* payload, uint16_t payloadLen)
 {
     printf("[DEVICE LOG] ");
-    if (payloadLen > 0) {
-        // 假设第一个字节是日志级别
-        uint8_t logLevel = payload[0];
+    if (payloadLen >= 2) {
+        uint8_t log_level = payload[0];
+        uint8_t msg_len = payload[1];
         const char* levelStr = "UNKNOWN";
-        switch (logLevel) {
+        
+        switch (log_level) {
             case 0: levelStr = "DEBUG"; break;
             case 1: levelStr = "INFO"; break;
             case 2: levelStr = "WARN"; break;
@@ -272,74 +568,56 @@ static void handle_log_message(uint8_t seq, const uint8_t* payload, uint16_t pay
         }
         printf("[%s] ", levelStr);
 
-        // 剩余字节作为消息内容
-        if (payloadLen > 1) {
-            for (uint16_t i = 1; i < payloadLen; i++) {
-                if (payload[i] >= 32 && payload[i] <= 126) {
-                    printf("%c", payload[i]);
-                } else {
-                    printf("\\x%02X", payload[i]);
-                }
-            }
+        if (payloadLen >= 2 + msg_len) {
+            printf("%.*s", msg_len, (char*)(payload + 2));
         }
     }
     printf("\n");
 }
 
-// 处理其他响应命令
-static void handle_command_response(uint8_t cmd, uint8_t seq, const uint8_t* payload, uint16_t payloadLen)
+static void handle_nack_response(uint8_t seq, const uint8_t* payload, uint16_t payloadLen)
 {
-    printf("[RECV] %s (seq=%u): ", get_command_name(cmd), seq);
-
-    switch (cmd) {
-        case CMD_START_COMMAND_RESPONSE:
-            if (payloadLen > 0 && payload[0] == 0) {
-                printf("SUCCESS - Data transmission started");
-                g_dataTransmissionOn = true;
-            } else {
-                printf("FAILED - Error code: %u", payloadLen > 0 ? payload[0] : 255);
-            }
-            break;
-
-        case CMD_STOP_COMMAND_RESPONSE:
-            if (payloadLen > 0 && payload[0] == 0) {
-                printf("SUCCESS - Data transmission stopped");
-                g_dataTransmissionOn = false;
-            } else {
-                printf("FAILED - Error code: %u", payloadLen > 0 ? payload[0] : 255);
-            }
-            break;
-
-        case CMD_PONG:
-            printf("PONG received - Device is alive");
-            g_deviceConnected = true;
-            break;
-
-        case CMD_PARAMETER_SET_RESPONSE:
-        case CMD_DEVICE_PARAMETERS_RESPONSE:
-        case CMD_RESET_COMMAND_RESPONSE:
-        default:
-            if (payloadLen > 0) {
-                printf("Data:");
-                for (uint16_t i = 0; i < payloadLen; i++) {
-                    printf(" %02X", payload[i]);
+    printf("[RECV] NACK (seq=%u): ", seq);
+    if (payloadLen >= 2) {
+        uint8_t error_code = payload[0];
+        uint8_t sub_error = payload[1];
+        printf("Error=0x%02X, Sub=0x%02X", error_code, sub_error);
+        
+        // Provide human-readable error descriptions
+        switch (error_code) {
+            case 0x01:
+                printf(" (Parameter Error");
+                switch (sub_error) {
+                    case 0x01: printf(" - Unsupported sample rate"); break;
+                    case 0x02: printf(" - Invalid channel ID"); break;
                 }
-            } else {
-                printf("No payload");
-            }
-            break;
+                printf(")");
+                break;
+            case 0x02:
+                printf(" (Status Error");
+                switch (sub_error) {
+                    case 0x01: printf(" - Device not initialized"); break;
+                    case 0x02: printf(" - Not triggered"); break;
+                }
+                printf(")");
+                break;
+            case 0x05:
+                printf(" (Command not supported)");
+                break;
+        }
     }
     printf("\n");
 }
 
-// 解析成功回调（给 tryParseFramesFromRx 调用）
+// ===================== Frame Processing =====================
+
 static void onFrameParsed(const uint8_t* frame, uint16_t frameLen)
 {
-    // 保存原始帧
+    // Save raw frame
     cache_frame(frame, frameLen);
     g_totalFrameCount++;
 
-    // 再做协议解析
+    // Parse protocol
     uint8_t  cmd = 0;
     uint8_t  seq = 0;
     uint8_t  payload[MAX_FRAME_SIZE];
@@ -347,33 +625,35 @@ static void onFrameParsed(const uint8_t* frame, uint16_t frameLen)
 
     int ret = parseFrame(frame, frameLen, &cmd, &seq, payload, &payloadLen);
     if (ret == 0) {
-        // 根据CommandID处理不同类型的消息
+        // Handle different message types based on Protocol V6
         switch (cmd) {
-            case CMD_DEVICE_STATUS_RESPONSE:
-                handle_device_status_response(seq, payload, payloadLen);
+            case CMD_PONG:
+                handle_pong_response(seq, payload, payloadLen);
                 break;
-
-            case CMD_ADC_DATA_PACKET:
-                handle_adc_data_packet(seq, payload, payloadLen);
+            case CMD_DEVICE_INFO_RESPONSE:
+                handle_device_info_response(seq, payload, payloadLen);
                 break;
-
-            case CMD_OTHER_SENSOR_DATA:
-                printf("[RECV] Other Sensor Data (seq=%u, len=%u)\n", seq, payloadLen);
+            case CMD_STATUS_RESPONSE:
+                handle_status_response(seq, payload, payloadLen);
                 break;
-
+            case CMD_DATA_PACKET:
+                handle_data_packet(seq, payload, payloadLen);
+                break;
+            case CMD_EVENT_TRIGGERED:
+                handle_event_triggered(seq, payload, payloadLen);
+                break;
+            case CMD_BUFFER_TRANSFER_COMPLETE:
+                printf("[RECV] Buffer Transfer Complete (seq=%u)\n", seq);
+                break;
             case CMD_LOG_MESSAGE:
                 handle_log_message(seq, payload, payloadLen);
                 break;
-
-            case CMD_START_COMMAND_RESPONSE:
-            case CMD_STOP_COMMAND_RESPONSE:
-            case CMD_RESET_COMMAND_RESPONSE:
-            case CMD_PONG:
-            case CMD_PARAMETER_SET_RESPONSE:
-            case CMD_DEVICE_PARAMETERS_RESPONSE:
-                handle_command_response(cmd, seq, payload, payloadLen);
+            case CMD_ACK:
+                printf("[RECV] ACK (seq=%u)\n", seq);
                 break;
-
+            case CMD_NACK:
+                handle_nack_response(seq, payload, payloadLen);
+                break;
             default:
                 printf("[RECV] Unknown Command 0x%02X (seq=%u, len=%u)\n", cmd, seq, payloadLen);
                 break;
@@ -383,29 +663,66 @@ static void onFrameParsed(const uint8_t* frame, uint16_t frameLen)
     }
 }
 
+// ===================== User Interface =====================
+
 static void print_help(void)
 {
-    printf("\n=== Available Commands ===\n");
+    printf("\n=== Protocol V6 Commands ===\n");
     printf("ESC/q/Q - Quit program\n");
     printf("h/H     - Show this help\n");
     printf("s       - Show status\n");
     printf("p       - Send PING\n");
-    printf("1       - Request device status\n");
-    printf("2       - Start data transmission\n");
-    printf("3       - Stop data transmission\n");
-    printf("r       - Reset device\n");
+    printf("i       - Get device info\n");
+    printf("1       - Set continuous mode\n");
+    printf("2       - Set trigger mode\n");
+    printf("3       - Start stream\n");
+    printf("4       - Stop stream\n");
+    printf("c       - Configure stream (demo)\n");
     printf("========================\n\n");
 }
 
 static void print_status(void)
 {
     printf("\n=== Current Status ===\n");
+    printf("Connection: %s (%s)\n", 
+           g_conn.connected ? "CONNECTED" : "DISCONNECTED",
+           g_conn.type == CONN_TYPE_SERIAL ? "Serial" : "Socket");
     printf("Device Connected: %s\n", g_deviceConnected ? "YES" : "NO");
+    if (g_deviceUniqueId != 0) {
+        printf("Device ID: 0x%016llX\n", (unsigned long long)g_deviceUniqueId);
+    }
+    if (strlen(g_deviceInfo) > 0) {
+        printf("Device Info: %s\n", g_deviceInfo);
+    }
     printf("Data Transmission: %s\n", g_dataTransmissionOn ? "ON" : "OFF");
     printf("Total Frames: %u\n", g_totalFrameCount);
-    printf("ADC Packets: %u\n", g_adcPacketCount);
+    printf("Data Packets: %u\n", g_dataPacketCount);
     printf("Current Seq: %u\n", g_seqCounter);
     printf("===================\n\n");
+}
+
+static void send_demo_stream_config(void)
+{
+    // Demo: Configure 2 channels
+    uint8_t config_payload[13]; // 1 + 2*6 bytes
+    uint16_t offset = 0;
+    
+    config_payload[offset++] = 2; // num_configs
+    
+    // Channel 0: 10kHz, int16
+    config_payload[offset++] = 0; // channel_id
+    *(uint32_t*)(config_payload + offset) = 10000; // sample_rate_hz
+    offset += 4;
+    config_payload[offset++] = 0x01; // sample_format (int16)
+    
+    // Channel 1: 10kHz, int16
+    config_payload[offset++] = 1; // channel_id
+    *(uint32_t*)(config_payload + offset) = 10000; // sample_rate_hz
+    offset += 4;
+    config_payload[offset++] = 0x01; // sample_format (int16)
+    
+    printf("Sending stream configuration (2 channels @ 10kHz, int16)...\n");
+    send_command(CMD_CONFIGURE_STREAM, config_payload, offset);
 }
 
 static bool handle_user_input(void)
@@ -419,44 +736,44 @@ static bool handle_user_input(void)
             case 'Q':
                 printf("Quit key pressed.\n");
                 return true;
-
             case 'h':
             case 'H':
                 print_help();
                 break;
-
             case 's':
             case 'S':
                 print_status();
                 break;
-
             case 'p':
             case 'P':
                 printf("Sending PING...\n");
                 send_command(CMD_PING, NULL, 0);
                 break;
-
+            case 'i':
+            case 'I':
+                printf("Getting device info...\n");
+                send_command(CMD_GET_DEVICE_INFO, NULL, 0);
+                break;
             case '1':
-                printf("Requesting device status...\n");
-                send_command(CMD_REQUEST_DEVICE_STATUS, NULL, 0);
+                printf("Setting continuous mode...\n");
+                send_command(CMD_SET_MODE_CONTINUOUS, NULL, 0);
                 break;
-
             case '2':
-                printf("Starting data transmission...\n");
-                send_command(CMD_START_DATA_TRANSMISSION, NULL, 0);
+                printf("Setting trigger mode...\n");
+                send_command(CMD_SET_MODE_TRIGGER, NULL, 0);
                 break;
-
             case '3':
-                printf("Stopping data transmission...\n");
-                send_command(CMD_STOP_DATA_TRANSMISSION, NULL, 0);
+                printf("Starting stream...\n");
+                send_command(CMD_START_STREAM, NULL, 0);
                 break;
-
-            case 'r':
-            case 'R':
-                printf("Sending device reset...\n");
-                send_command(CMD_DEVICE_RESET, NULL, 0);
+            case '4':
+                printf("Stopping stream...\n");
+                send_command(CMD_STOP_STREAM, NULL, 0);
                 break;
-
+            case 'c':
+            case 'C':
+                send_demo_stream_config();
+                break;
             default:
                 printf("Unknown command '%c'. Press 'h' for help.\n", ch);
                 break;
@@ -465,89 +782,32 @@ static bool handle_user_input(void)
     return false;
 }
 
-static HANDLE open_serial(const char* comPort)
-{
-    HANDLE h = CreateFileA(
-        comPort,
-        GENERIC_READ | GENERIC_WRITE,
-        0,
-        NULL,
-        OPEN_EXISTING,
-        0,
-        NULL
-    );
-    if (h == INVALID_HANDLE_VALUE) {
-        printf("Open %s failed, err=%lu\n", comPort, GetLastError());
-        return INVALID_HANDLE_VALUE;
-    }
+// ===================== Main Communication Loop =====================
 
-    DCB dcb = {0};
-    dcb.DCBlength = sizeof(dcb);
-    if (!GetCommState(h, &dcb)) {
-        printf("GetCommState failed\n");
-        CloseHandle(h);
-        return INVALID_HANDLE_VALUE;
-    }
-
-    dcb.BaudRate = BAUDRATE;
-    dcb.ByteSize = BYTE_SIZE;
-    dcb.StopBits = STOP_BITS;
-    dcb.Parity   = PARITY_MODE;
-
-    if (!SetCommState(h, &dcb)) {
-        printf("SetCommState failed\n");
-        CloseHandle(h);
-        return INVALID_HANDLE_VALUE;
-    }
-
-    COMMTIMEOUTS to = {0};
-    to.ReadIntervalTimeout         = 10;
-    to.ReadTotalTimeoutConstant    = 10;
-    to.ReadTotalTimeoutMultiplier  = 2;
-    to.WriteTotalTimeoutConstant   = 10;
-    to.WriteTotalTimeoutMultiplier = 2;
-    if (!SetCommTimeouts(h, &to)) {
-        printf("SetCommTimeouts failed\n");
-        CloseHandle(h);
-        return INVALID_HANDLE_VALUE;
-    }
-
-    PurgeComm(h, PURGE_RXCLEAR | PURGE_TXCLEAR | PURGE_RXABORT | PURGE_TXABORT);
-    return h;
-}
-
-static void serial_loop(HANDLE hSerial)
+static void communication_loop(void)
 {
     uint8_t buf[10000];
-    DWORD   bytesRead = 0;
-
-    g_hSerial = hSerial;  // 设置全局句柄供发送命令使用
+    
     initRxBuffer(&g_rx);
 
-    printf("Serial communication started. Press 'h' for help.\n");
+    printf("Communication started (Protocol V6). Press 'h' for help.\n");
+    printf("Connection type: %s\n", g_conn.type == CONN_TYPE_SERIAL ? "Serial" : "TCP Socket");
 
-    // 发送初始PING命令检测设备
+    // Send initial PING to detect device
     printf("Sending initial PING to detect device...\n");
     send_command(CMD_PING, NULL, 0);
 
     while (g_running) {
-        BOOL ok = ReadFile(hSerial, buf, sizeof(buf), &bytesRead, NULL);
-        if (!ok) {
-            DWORD err = GetLastError();
-            if (err == ERROR_OPERATION_ABORTED) break;
-            printf("ReadFile err=%lu\n", err);
+        int bytesRead = conn_read_data(buf, sizeof(buf));
+        
+        if (bytesRead > 0) {
+            feedRxBuffer(&g_rx, buf, (uint16_t)bytesRead);
+            tryParseFramesFromRx(&g_rx, onFrameParsed);
+        } else if (bytesRead < 0) {
+            printf("Connection error or closed\n");
             break;
         }
 
-        if (bytesRead > 0) {
-            // ★ 修正：使用 feedRxBuffer()
-            feedRxBuffer(&g_rx, buf, (uint16_t)bytesRead);
-
-            // 尝试解析
-            tryParseFramesFromRx(&g_rx, onFrameParsed);
-        }
-
-        // 处理用户输入
         if (handle_user_input()) {
             g_running = false;
         }
@@ -555,70 +815,127 @@ static void serial_loop(HANDLE hSerial)
         Sleep(1);
     }
 
-    // 收尾：把剩余缓存写入
+    // Flush remaining frames
     if (g_frameInBatch > 0)
         flush_batch_to_file();
-
-    g_hSerial = INVALID_HANDLE_VALUE;
 }
+
+// ===================== Main Function =====================
 
 int main(int argc, char* argv[])
 {
-    char comPort[32];
+    bool useSocket = false;
+    char host[64] = DEFAULT_TCP_HOST;
+    char port[16] = DEFAULT_TCP_PORT;
+    char comPort[32] = DEFAULT_COM_PORT;
 
-    // 解析命令行参数
-    if (argc > 2) {
+    // Parse command line arguments
+    if (argc == 1) {
+        // Default: use serial COM7
+        strcpy(comPort, DEFAULT_COM_PORT);
+    } else if (argc == 2) {
+        if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "/?") == 0) {
+            print_usage(argv[0]);
+            return 0;
+        } else if (strcmp(argv[1], "-s") == 0) {
+            // Socket mode with default host:port
+            useSocket = true;
+        } else {
+            // COM port number
+            int comNum = atoi(argv[1]);
+            if (comNum <= 0 || comNum > 999) {
+                printf("Error: Invalid COM port number '%s'. Must be between 1 and 999.\n\n", argv[1]);
+                print_usage(argv[0]);
+                return 1;
+            }
+            snprintf(comPort, sizeof(comPort), "\\\\.\\COM%d", comNum);
+        }
+    } else if (argc == 3) {
+        if (strcmp(argv[1], "-s") == 0) {
+            // Socket mode with custom host
+            useSocket = true;
+            strcpy(host, argv[2]);
+        } else {
+            printf("Error: Invalid arguments.\n\n");
+            print_usage(argv[0]);
+            return 1;
+        }
+    } else if (argc == 4) {
+        if (strcmp(argv[1], "-s") == 0) {
+            // Socket mode with custom host:port
+            useSocket = true;
+            strcpy(host, argv[2]);
+            strcpy(port, argv[3]);
+        } else {
+            printf("Error: Invalid arguments.\n\n");
+            print_usage(argv[0]);
+            return 1;
+        }
+    } else {
         printf("Error: Too many arguments.\n\n");
         print_usage(argv[0]);
         return 1;
     }
 
-    if (argc == 2) {
-        // 检查是否是帮助参数
-        if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "/?") == 0) {
-            print_usage(argv[0]);
-            return 0;
-        }
-
-        // 解析COM端口号
-        int comNum = atoi(argv[1]);
-        if (comNum <= 0 || comNum > 999) {
-            printf("Error: Invalid COM port number '%s'. Must be between 1 and 999.\n\n", argv[1]);
-            print_usage(argv[0]);
-            return 1;
-        }
-        snprintf(comPort, sizeof(comPort), "\\\\.\\COM%d", comNum);
+    printf("=== Data Reader - Protocol V6 ===\n");
+    if (useSocket) {
+        printf("Mode: TCP Socket\n");
+        printf("Target: %s:%s\n", host, port);
     } else {
-        // 使用默认COM端口
-        strcpy(comPort, DEFAULT_COM_PORT);
+        printf("Mode: Serial Port\n");
+        printf("Port: %s\n", comPort);
+        printf("Baud Rate: %u\n", (unsigned int)BAUDRATE);
     }
+    printf("==================================\n\n");
 
     if (!open_next_file()) {
-        // 没法写文件也可以继续，只是不会存原始帧
-        printf("Warning: cannot open output file, frames won't be saved.\n");
+        printf("Warning: Cannot open output file, frames won't be saved.\n");
     }
 
-    // 初始化共享内存
+    // Initialize shared memory
     if (initSharedMemory(&g_sharedMem)) {
         printf("Shared memory initialized successfully.\n");
     } else {
         printf("Warning: Failed to initialize shared memory. Data processing will not be available.\n");
     }
 
-    HANDLE hSerial = open_serial(comPort);
-    if (hSerial == INVALID_HANDLE_VALUE) {
+    // Establish connection
+    bool connected = false;
+    if (useSocket) {
+        printf("Connecting to %s:%s...\n", host, port);
+        connected = open_socket_connection(host, port);
+        if (connected) {
+            printf("TCP connection established.\n");
+        } else {
+            printf("Failed to connect to %s:%s\n", host, port);
+        }
+    } else {
+        printf("Opening serial port %s...\n", comPort);
+        connected = open_serial_connection(comPort);
+        if (connected) {
+            printf("Serial port opened successfully.\n");
+        } else {
+            printf("Failed to open serial port %s\n", comPort);
+        }
+    }
+
+    if (!connected) {
         if (g_fp) fclose(g_fp);
+        cleanupSharedMemory(&g_sharedMem);
         return 1;
     }
 
-    printf("Start reading %s ... (ESC/q to quit)\n", comPort);
-    serial_loop(hSerial);
+    printf("Starting communication... (ESC/q to quit)\n\n");
+    communication_loop();
 
-    CloseHandle(hSerial);
+    // Cleanup
+    conn_close();
     if (g_fp) fclose(g_fp);
-
-    // 清理共享内存
     cleanupSharedMemory(&g_sharedMem);
+
+    if (useSocket) {
+        WSACleanup();
+    }
 
     puts("Bye.");
     return 0;
