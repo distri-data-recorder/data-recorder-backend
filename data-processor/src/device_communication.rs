@@ -31,20 +31,35 @@ pub struct RawFrame {
     pub command_id: u8,
     pub sequence: u8,
     pub payload: Vec<u8>,
-    // 未使用但保留：改名为 _timestamp 以消除 dead_code 警告
     pub _timestamp: std::time::Instant,
 }
 
 #[derive(Debug, Clone)]
 pub struct DataPacket {
     pub timestamp_ms: u32,
-    pub channel_mask: u16,
-    // 未使用但保留：改名为 _sample_count 以消除 dead_code 警告
-    pub _sample_count: u16,
+    pub enabled_channels: u16,  // 修正字段名
+    pub sample_count: u16,      // 修正字段名
     pub sensor_data: Vec<u8>,
+    pub data_type: DataType,    // 新增：区分数据类型
 }
 
-#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DataType {
+    Continuous,
+    Trigger {
+        trigger_timestamp: u32,
+        is_complete: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct TriggerEvent {
+    pub timestamp: u32,
+    pub channel: u16,
+    pub pre_samples: u32,
+    pub post_samples: u32,
+}
+
 #[derive(Debug, Clone)]
 pub enum DeviceEvent {
     Connected(String),
@@ -52,7 +67,8 @@ pub enum DeviceEvent {
     FrameReceived(RawFrame),
     DataPacket(DataPacket),
     StatusUpdate(DeviceStatus),
-    // 目前未使用，先保留
+    TriggerEvent(TriggerEvent),        // 新增：触发事件
+    BufferTransferComplete,            // 新增：缓冲传输完成
     LogMessage { level: u8, message: String },
     Error(String),
 }
@@ -82,6 +98,7 @@ pub enum DeviceCommand {
     StartStream,
     StopStream,
     ConfigureStream { channels: Vec<ChannelConfig> },
+    RequestBufferedData,               // 新增：请求缓冲数据
 }
 
 /// 连接抽象：串口 / TCP（全异步）
@@ -274,6 +291,10 @@ pub struct DeviceManager {
     command_rx: mpsc::UnboundedReceiver<DeviceCommand>,
 
     seq: u8,
+    
+    // 触发模式状态跟踪
+    trigger_active: bool,
+    current_trigger: Option<TriggerEvent>,
 }
 
 impl DeviceManager {
@@ -297,6 +318,8 @@ impl DeviceManager {
             event_tx,
             command_rx,
             seq: 0,
+            trigger_active: false,
+            current_trigger: None,
         };
         (me, event_rx, cmd_tx)
     }
@@ -380,10 +403,26 @@ impl DeviceManager {
         match cmd {
             DeviceCommand::Ping => self.send_command(0x01, &[]).await,
             DeviceCommand::GetDeviceInfo => self.send_command(0x03, &[]).await,
-            DeviceCommand::SetModeContinuous => self.send_command(0x10, &[]).await,
-            DeviceCommand::SetModeTrigger => self.send_command(0x11, &[]).await,
-            DeviceCommand::StartStream => self.send_command(0x12, &[]).await,
-            DeviceCommand::StopStream => self.send_command(0x13, &[]).await,
+            DeviceCommand::SetModeContinuous => {
+                self.trigger_active = false;
+                self.current_trigger = None;
+                self.status.mode = Some("continuous".to_string());
+                self.send_command(0x10, &[]).await
+            },
+            DeviceCommand::SetModeTrigger => {
+                self.trigger_active = true;
+                self.current_trigger = None;
+                self.status.mode = Some("trigger".to_string());
+                self.send_command(0x11, &[]).await
+            },
+            DeviceCommand::StartStream => {
+                self.status.stream_active = true;
+                self.send_command(0x12, &[]).await
+            },
+            DeviceCommand::StopStream => {
+                self.status.stream_active = false;
+                self.send_command(0x13, &[]).await
+            },
             DeviceCommand::ConfigureStream { channels } => {
                 // 简单示例：数量 + (id, rate, fmt)*
                 let mut payload = Vec::with_capacity(1 + channels.len()*7);
@@ -394,6 +433,15 @@ impl DeviceManager {
                     payload.push(ch.format);
                 }
                 self.send_command(0x14, &payload).await
+            },
+            DeviceCommand::RequestBufferedData => {
+                if self.trigger_active {
+                    info!("Requesting buffered trigger data");
+                    self.send_command(0x42, &[]).await
+                } else {
+                    warn!("RequestBufferedData called but not in trigger mode");
+                    Ok(())
+                }
             }
         }
     }
@@ -441,29 +489,101 @@ impl DeviceManager {
                 }
                 let _ = self.event_tx.send(DeviceEvent::StatusUpdate(self.status.clone()));
             }
-            0x40 => { // DATA
+            0x40 => { // DATA_PACKET
                 if f.payload.len() >= 8 {
                     let ts = u32::from_le_bytes([f.payload[0],f.payload[1],f.payload[2],f.payload[3]]);
-                    let ch_mask = u16::from_le_bytes([f.payload[4],f.payload[5]]);
-                    let samples = u16::from_le_bytes([f.payload[6],f.payload[7]]);
+                    let enabled_channels = u16::from_le_bytes([f.payload[4],f.payload[5]]);
+                    let sample_count = u16::from_le_bytes([f.payload[6],f.payload[7]]);
                     let data = f.payload[8..].to_vec();
+                    
+                    // 确定数据类型
+                    let data_type = if self.trigger_active && self.current_trigger.is_some() {
+                        DataType::Trigger {
+                            trigger_timestamp: self.current_trigger.as_ref().unwrap().timestamp,
+                            is_complete: false, // 将在传输完成时更新
+                        }
+                    } else {
+                        DataType::Continuous
+                    };
+                    
+                    debug!("DATA packet: ts={}, channels=0x{:04X}, samples={}, type={:?}", 
+                           ts, enabled_channels, sample_count, data_type);
+                    
                     let pkt = DataPacket {
                         timestamp_ms: ts,
-                        channel_mask: ch_mask,
-                        _sample_count: samples,
+                        enabled_channels,
+                        sample_count,
                         sensor_data: data,
+                        data_type,
                     };
                     let _ = self.event_tx.send(DeviceEvent::DataPacket(pkt));
                 }
             }
-            0x41 => { // 触发事件
-                info!("TRIGGER EVENT, len={}", f.payload.len());
+            0x41 => { // EVENT_TRIGGERED
+                if f.payload.len() >= 14 {
+                    let timestamp = u32::from_le_bytes([f.payload[0],f.payload[1],f.payload[2],f.payload[3]]);
+                    let channel = u16::from_le_bytes([f.payload[4],f.payload[5]]);
+                    let pre_samples = u32::from_le_bytes([f.payload[6],f.payload[7],f.payload[8],f.payload[9]]);
+                    let post_samples = u32::from_le_bytes([f.payload[10],f.payload[11],f.payload[12],f.payload[13]]);
+                    
+                    let trigger_event = TriggerEvent {
+                        timestamp,
+                        channel,
+                        pre_samples,
+                        post_samples,
+                    };
+                    
+                    info!("TRIGGER EVENT: ts={}, ch={}, pre={}, post={}", 
+                          timestamp, channel, pre_samples, post_samples);
+                    
+                    // 保存当前触发事件用于后续数据包标识
+                    self.current_trigger = Some(trigger_event.clone());
+                    let _ = self.event_tx.send(DeviceEvent::TriggerEvent(trigger_event));
+                } else {
+                    warn!("TRIGGER EVENT with insufficient payload length: {}", f.payload.len());
+                }
+            }
+            0x4F => { // BUFFER_TRANSFER_COMPLETE
+                info!("Trigger data transfer complete");
+                
+                // 更新当前触发的完成状态
+                if let Some(ref mut _trigger) = self.current_trigger {
+                    // 这里可以进行一些清理工作
+                }
+                
+                let _ = self.event_tx.send(DeviceEvent::BufferTransferComplete);
+                
+                // 可以选择清除当前触发状态，或者保留用于下一次触发
+                // self.current_trigger = None;
             }
             0x90 => { // ACK
                 debug!("ACK seq={}", f.sequence);
             }
             0x91 => { // NACK
                 warn!("NACK seq={} payload={:X?}", f.sequence, f.payload);
+                if f.payload.len() >= 2 {
+                    let error_type = f.payload[0];
+                    let error_code = f.payload[1];
+                    let error_msg = match (error_type, error_code) {
+                        (0x01, 0x01) => "Parameter error: invalid parameter".to_string(),
+                        (0x01, 0x02) => "Parameter error: invalid channel configuration".to_string(),
+                        (0x02, 0x01) => "Status error: invalid mode for operation".to_string(),
+                        (0x02, 0x02) => "Status error: trigger not occurred".to_string(),
+                        (0x05, 0x00) => "Command not supported".to_string(),
+                        _ => format!("Unknown error: type={}, code={}", error_type, error_code),
+                    };
+                    let _ = self.event_tx.send(DeviceEvent::Error(error_msg));
+                }
+            }
+            0xE0 => { // LOG_MESSAGE
+                if f.payload.len() >= 2 {
+                    let level = f.payload[0];
+                    let msg_len = f.payload[1] as usize;
+                    if f.payload.len() >= 2 + msg_len {
+                        let message = String::from_utf8_lossy(&f.payload[2..2 + msg_len]).to_string();
+                        let _ = self.event_tx.send(DeviceEvent::LogMessage { level, message });
+                    }
+                }
             }
             _ => {
                 debug!("Unknown frame 0x{:02X}", f.command_id);

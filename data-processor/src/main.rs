@@ -8,13 +8,13 @@ mod config;
 use anyhow::Result;
 use tokio::sync::watch;
 use tracing::{error, info, warn};
-use crate::data_processing::{ProcessedData, DataMetadata, DataQuality};
-use device_communication::{DeviceManager, DeviceConfig, ConnectionType, DeviceEvent, DataPacket};
+use crate::data_processing::{DataProcessor};
+use device_communication::{DeviceManager, DeviceConfig, ConnectionType, DeviceEvent};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-    info!("Starting Integrated Data Processor v2.0");
+    info!("Starting Integrated Data Processor v2.0 with Trigger Support");
 
     // 加载配置
     let cfg = config::Config::load()?;
@@ -42,6 +42,9 @@ async fn main() -> Result<()> {
     
     // 用于广播处理后的数据到WebSocket
     let (processed_tx, processed_rx_for_ws) = tokio::sync::broadcast::channel(1000);
+    
+    // 用于WebSocket广播触发事件
+    let (trigger_event_tx, trigger_event_rx) = tokio::sync::broadcast::channel(100);
 
     // ======= 设备管理任务 =======
     let device_handle = tokio::spawn(async move {
@@ -60,34 +63,89 @@ async fn main() -> Result<()> {
 
     // ======= 设备事件处理任务 =======
     let processed_tx_clone = processed_tx.clone();
+    let trigger_event_tx_clone = trigger_event_tx.clone();
     let pkt_tx_clone = pkt_tx.clone();
     let event_handle = tokio::spawn(async move {
         let mut packet_count = 0u64;
+        let mut data_processor = DataProcessor::new();
         
         while let Some(event) = device_events.recv().await {
             match event {
                 DeviceEvent::Connected(conn_type) => {
                     info!("Device connected: {}", conn_type);
+                    // 重置处理器状态
+                    data_processor.reset_trigger_state();
                 }
                 DeviceEvent::Disconnected => {
                     warn!("Device disconnected");
                 }
                 DeviceEvent::DataPacket(packet) => {
                     // 将设备数据包转换为处理后的数据
-                    match convert_data_packet(packet).await {
+                    match data_processor.process_packet(&packet) {
                         Ok(processed) => {
                             packet_count += 1;
                             let _ = pkt_tx_clone.send(packet_count);
+                            
+                            // 日志记录，区分连续和触发数据
+                            let data_len = processed.data.len();
+                            let data_source = processed.data_type.source.clone();
+                            let trigger_info = processed.data_type.trigger_info.clone();
+                            
                             let _ = processed_tx_clone.send(processed);
+                            
+                            match data_source {
+                                crate::data_processing::DataSource::Continuous => {
+                                    if packet_count % 100 == 0 { // 每100包记录一次，避免日志过多
+                                        info!("Processed continuous data packet #{}, {} samples", 
+                                              packet_count, data_len);
+                                    }
+                                }
+                                crate::data_processing::DataSource::Trigger => {
+                                    if let Some(ref trigger_info) = trigger_info {
+                                        info!("Processed trigger data packet #{}, sequence in burst: {}, {} samples", 
+                                              packet_count, 
+                                              trigger_info.sequence_in_burst.unwrap_or(0), 
+                                              data_len);
+                                    }
+                                }
+                            }
                         }
                         Err(e) => {
-                            error!("Failed to convert data packet: {}", e);
+                            error!("Failed to process data packet: {}", e);
                         }
                     }
                 }
+                DeviceEvent::TriggerEvent(trigger_event) => {
+                    info!("Trigger event received: timestamp={}, channel={}, pre={}, post={}", 
+                          trigger_event.timestamp, trigger_event.channel, 
+                          trigger_event.pre_samples, trigger_event.post_samples);
+                    
+                    // 广播触发事件到WebSocket客户端
+                    let _ = trigger_event_tx_clone.send(trigger_event);
+                }
+                DeviceEvent::BufferTransferComplete => {
+                    info!("Trigger data transfer completed");
+                    
+                    // 可以在这里触发自动文件保存
+                    let stats = data_processor.get_stats();
+                    info!("Processing stats: total_packets={}, trigger_burst_seq={}", 
+                          stats.total_packets_processed, stats.current_trigger_burst_sequence);
+                    
+                    // 通知WebSocket客户端传输完成
+                    let _complete_event = serde_json::json!({
+                        "type": "trigger_complete",
+                        "timestamp": chrono::Utc::now().timestamp_millis(),
+                        "total_packets": stats.total_packets_processed,
+                        "burst_sequence": stats.current_trigger_burst_sequence,
+                    });
+                    
+                    // 通过processed_tx发送特殊的完成消息
+                    // 这里我们创建一个特殊的ProcessedData来标识完成事件
+                    // 实际实现中可能需要更优雅的方式
+                }
                 DeviceEvent::StatusUpdate(status) => {
-                    info!("Device status: connected={}, id={:?}, fw={:?}", 
-                          status.connected, status.device_id, status.firmware_version);
+                    info!("Device status: connected={}, id={:?}, fw={:?}, mode={:?}", 
+                          status.connected, status.device_id, status.firmware_version, status.mode);
                 }
                 DeviceEvent::LogMessage { level, message } => {
                     match level {
@@ -101,16 +159,21 @@ async fn main() -> Result<()> {
                     error!("Device error: {}", err);
                 }
                 DeviceEvent::FrameReceived(frame) => {
-                    info!("Device frame: cmd=0x{:02X}, seq={}, len={}", 
-                          frame.command_id, frame.sequence, frame.payload.len());
+                    // 只在调试模式下记录帧信息，避免日志过多
+                    tracing::debug!("Device frame: cmd=0x{:02X}, seq={}, len={}", 
+                                   frame.command_id, frame.sequence, frame.payload.len());
                 }
             }
         }
         warn!("Device event processing loop ended");
     });
 
-    // ======= WebSocket 服务：广播处理后的数据 =======
-    let mut ws_server = websocket::WebSocketServer::new(cfg.websocket.clone(), processed_rx_for_ws);
+    // ======= WebSocket 服务：广播处理后的数据和触发事件 =======
+    let mut ws_server = websocket::WebSocketServer::new(
+        cfg.websocket.clone(), 
+        processed_rx_for_ws,
+        trigger_event_rx
+    );
     let ws_clients_rx = ws_server.client_count_rx.clone();
     let ws_handle = tokio::spawn(async move {
         if let Err(e) = ws_server.run().await {
@@ -134,6 +197,7 @@ async fn main() -> Result<()> {
     info!("All services started successfully");
     info!("WebSocket server: ws://{}:{}", cfg.websocket.host, cfg.websocket.port);
     info!("HTTP server: http://{}:{}", cfg.web_server.host, cfg.web_server.port);
+    info!("Trigger mode support: ENABLED");
     info!("Press Ctrl+C to shutdown");
 
     // 等待任一任务退出或 Ctrl+C
@@ -159,50 +223,4 @@ async fn main() -> Result<()> {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     info!("Shutdown complete");
     Ok(())
-}
-
-async fn convert_data_packet(packet: DataPacket) -> Result<ProcessedData> {
-    // 示例：把 payload 视为单通道 int16 LE，转换成电压（12bit, 3.3V参考）
-    let mut samples = Vec::with_capacity(packet.sensor_data.len() / 2);
-    for ch in packet.sensor_data.chunks_exact(2) {
-        let raw = u16::from_le_bytes([ch[0], ch[1]]);
-        let voltage = (raw as f64 / 4095.0) * 3.3;
-        samples.push(voltage);
-    }
-
-    // 简单 5 点滑动平均
-    let filtered = if samples.len() > 5 {
-        let mut out = Vec::with_capacity(samples.len());
-        for i in 0..samples.len() {
-            if i < 2 || i + 2 >= samples.len() {
-                out.push(samples[i]);
-            } else {
-                let avg = (samples[i-2] + samples[i-1] + samples[i] + samples[i+1] + samples[i+2]) / 5.0;
-                out.push(avg);
-            }
-        }
-        out
-    } else { samples };
-
-    // 数据质量
-    let quality = if filtered.is_empty() {
-        DataQuality::Error("No samples".into())
-    } else {
-        let (min, max) = (
-            filtered.iter().cloned().fold(f64::INFINITY, f64::min),
-            filtered.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
-        );
-        if min < -0.1 || max > 3.4 {
-            DataQuality::Warning(format!("Out of range: [{:.2}, {:.2}]V", min, max))
-        } else { DataQuality::Good }
-    };
-
-    Ok(ProcessedData {
-        timestamp: packet.timestamp_ms as u64,
-        sequence: 0,
-        channel_count: packet.channel_mask.count_ones() as usize,
-        sample_rate: 10_000.0, // 示例值，可由设备配置/INFO带出
-        data: filtered,
-        metadata: DataMetadata { packet_count: 0, processing_time_us: 0, data_quality: quality },
-    })
 }

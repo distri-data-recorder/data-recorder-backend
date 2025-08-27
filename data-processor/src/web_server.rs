@@ -42,6 +42,8 @@ pub struct SystemStatus {
     pub uptime_seconds: u64,
     pub memory_usage_mb: f64,
     pub connection_type: String,
+    pub current_mode: Option<String>,  // 新增：当前模式（continuous/trigger）
+    pub trigger_support: bool,         // 新增：触发支持状态
 }
 
 #[derive(Clone)]
@@ -53,6 +55,7 @@ pub struct AppState {
     clients_rx: watch::Receiver<usize>,
     collecting: Arc<Mutex<bool>>,
     device_connected: Arc<Mutex<bool>>,
+    current_mode: Arc<Mutex<Option<String>>>,  // 新增：跟踪当前模式
     file_manager: Arc<FileManager>,
 }
 
@@ -78,6 +81,7 @@ impl WebServer {
                 clients_rx,
                 collecting: Arc::new(Mutex::new(false)),
                 device_connected: Arc::new(Mutex::new(false)),
+                current_mode: Arc::new(Mutex::new(None)),
                 file_manager: Arc::new(fm),
             },
         }
@@ -108,6 +112,7 @@ impl WebServer {
             .route("/api/control/configure", post(configure_stream))
             .route("/api/control/continuous_mode", post(set_continuous_mode))
             .route("/api/control/trigger_mode", post(set_trigger_mode))
+            .route("/api/control/request_trigger_data", post(request_trigger_data))  // 添加这个路由
             // 文件管理API
             .route("/api/files", get(list_files))
             .route("/api/files/:filename", get(download_file))
@@ -204,6 +209,11 @@ async fn get_device_info(State(st): State<AppState>) -> Result<Json<ApiResponse<
 async fn set_continuous_mode(State(st): State<AppState>) -> Result<Json<ApiResponse<String>>, StatusCode> {
     info!("API: Set continuous mode requested");
     
+    {
+        let mut mode = st.current_mode.lock().await;
+        *mode = Some("continuous".to_string());
+    }
+    
     // 发送连续模式命令
     if let Err(err) = st.device_command_tx.send(DeviceCommand::SetModeContinuous) {
         error!("Failed to send continuous mode command: {}", err);
@@ -221,6 +231,11 @@ async fn set_continuous_mode(State(st): State<AppState>) -> Result<Json<ApiRespo
 async fn set_trigger_mode(State(st): State<AppState>) -> Result<Json<ApiResponse<String>>, StatusCode> {
     info!("API: Set trigger mode requested");
     
+    {
+        let mut mode = st.current_mode.lock().await;
+        *mode = Some("trigger".to_string());
+    }
+    
     // 发送触发模式命令
     if let Err(err) = st.device_command_tx.send(DeviceCommand::SetModeTrigger) {
         error!("Failed to send trigger mode command: {}", err);
@@ -230,6 +245,37 @@ async fn set_trigger_mode(State(st): State<AppState>) -> Result<Json<ApiResponse
     Ok(Json(ApiResponse {
         success: true,
         data: Some("Trigger mode command sent".to_string()),
+        error: None,
+        timestamp: chrono::Utc::now().timestamp_millis(),
+    }))
+}
+
+async fn request_trigger_data(State(st): State<AppState>) -> Result<Json<ApiResponse<String>>, StatusCode> {
+    info!("API: Request trigger data requested");
+    
+    // 检查是否在触发模式
+    {
+        let mode = st.current_mode.lock().await;
+        if mode.as_deref() != Some("trigger") {
+            warn!("Request trigger data called but not in trigger mode");
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                error: Some("Device not in trigger mode".to_string()),
+                timestamp: chrono::Utc::now().timestamp_millis(),
+            }));
+        }
+    }
+    
+    // 发送请求缓冲数据命令
+    if let Err(err) = st.device_command_tx.send(DeviceCommand::RequestBufferedData) {
+        error!("Failed to send request buffered data command: {}", err);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some("Buffered data request sent".to_string()),
         error: None,
         timestamp: chrono::Utc::now().timestamp_millis(),
     }))
@@ -281,6 +327,7 @@ async fn get_status(State(st): State<AppState>) -> Result<Json<ApiResponse<Syste
     let clients = *st.clients_rx.borrow();
     let collecting = *st.collecting.lock().await;
     let device_connected = *st.device_connected.lock().await;
+    let current_mode = st.current_mode.lock().await.clone();
 
     let status = SystemStatus {
         data_collection_active: collecting,
@@ -290,6 +337,8 @@ async fn get_status(State(st): State<AppState>) -> Result<Json<ApiResponse<Syste
         uptime_seconds: st.start_at.elapsed().as_secs(),
         memory_usage_mb: get_memory_usage_mb(),
         connection_type: st.cfg.device.connection_type.clone(),
+        current_mode,
+        trigger_support: true,  // 标识触发支持已启用
     };
 
     Ok(Json(ApiResponse {
@@ -419,6 +468,7 @@ async fn health_check() -> Json<ApiResponse<serde_json::Value>> {
             "status": "healthy",
             "service": "data-processor",
             "version": "2.0",
+            "trigger_support": true,
             "timestamp": chrono::Utc::now().to_rfc3339()
         })),
         error: None,
@@ -430,13 +480,29 @@ async fn api_info() -> Json<serde_json::Value> {
     Json(json!({
         "name": "Integrated Data Processor API",
         "version": "2.0",
-        "description": "High-performance data acquisition and processing system",
+        "description": "High-performance data acquisition and processing system with trigger support",
+        "features": {
+            "continuous_mode": true,
+            "trigger_mode": true,
+            "websocket_streaming": true,
+            "file_management": true,
+            "real_time_processing": true
+        },
         "endpoints": {
             "health": "/health",
             "status": "/api/control/status",
             "start": "/api/control/start",
             "stop": "/api/control/stop",
             "ping": "/api/control/ping",
+            "device_info": "/api/control/device_info",
+            "modes": {
+                "continuous": "/api/control/continuous_mode",
+                "trigger": "/api/control/trigger_mode"
+            },
+            "trigger": {
+                "request_data": "/api/control/request_trigger_data"
+            },
+            "configuration": "/api/control/configure",
             "files": {
                 "list": "/api/files?dir=<optional>",
                 "download": "/api/files/{filename}",
