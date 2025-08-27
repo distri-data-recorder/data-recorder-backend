@@ -2,6 +2,14 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeviceConfig {
+    pub connection_type: String, // "serial" or "socket"
+    pub serial_port: Option<String>,
+    pub socket_address: Option<String>,
+    pub baud_rate: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WebServerConfig {
     pub host: String,
     pub port: u16,
@@ -27,24 +35,29 @@ pub struct StorageConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
+    pub device: DeviceConfig,
     pub web_server: WebServerConfig,
     pub websocket: WebSocketConfig,
-    pub shared_memory_name: String,
     pub storage: StorageConfig,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
+            device: DeviceConfig {
+                connection_type: "socket".into(),
+                serial_port: Some("COM7".into()),
+                socket_address: Some("127.0.0.1:9001".into()),
+                baud_rate: 115200,
+            },
             web_server: WebServerConfig {
                 host: "127.0.0.1".into(),
                 port: 8080,
             },
             websocket: WebSocketConfig {
                 host: "127.0.0.1".into(),
-                port: 8081, // 和 HTTP 区分开也可以
+                port: 8081,
             },
-            shared_memory_name: "ADC_DATA_SHARED_MEM".into(),
             storage: StorageConfig {
                 data_dir: "./data".into(),
                 default_prefix: "wave".into(),
@@ -59,12 +72,28 @@ impl Config {
     /// 载入配置：默认值 + 环境变量覆盖
     ///
     /// 支持的环境变量：
+    /// - DEVICE_TYPE, SERIAL_PORT, SOCKET_ADDRESS, BAUD_RATE
     /// - WEB_HOST, WEB_PORT
     /// - WS_HOST, WS_PORT
-    /// - SHM_NAME
     /// - DATA_DIR, FILE_PREFIX, FILE_EXT, MAX_FILES
     pub fn load() -> Result<Self> {
         let mut cfg = Self::default();
+
+        // Device
+        if let Ok(v) = std::env::var("DEVICE_TYPE") {
+            cfg.device.connection_type = v;
+        }
+        if let Ok(v) = std::env::var("SERIAL_PORT") {
+            cfg.device.serial_port = Some(v);
+        }
+        if let Ok(v) = std::env::var("SOCKET_ADDRESS") {
+            cfg.device.socket_address = Some(v);
+        }
+        if let Ok(v) = std::env::var("BAUD_RATE") {
+            if let Ok(rate) = v.parse::<u32>() {
+                cfg.device.baud_rate = rate;
+            }
+        }
 
         // Web
         if let Ok(v) = std::env::var("WEB_HOST") {
@@ -84,11 +113,6 @@ impl Config {
             if let Ok(p) = v.parse::<u16>() {
                 cfg.websocket.port = p;
             }
-        }
-
-        // Shared Memory
-        if let Ok(v) = std::env::var("SHM_NAME") {
-            cfg.shared_memory_name = v;
         }
 
         // Storage

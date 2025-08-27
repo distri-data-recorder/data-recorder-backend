@@ -1,6 +1,6 @@
 use crate::config::{Config, StorageConfig};
 use crate::file_manager::{FileManager, FileInfo, ProcessedDataFile};
-use crate::ipc::IpcClient;
+use crate::device_communication::{DeviceCommand, ChannelConfig};
 use anyhow::Result;
 use axum::{
     extract::{Path, Query, State},
@@ -14,10 +14,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{watch, Mutex, mpsc};
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
-use tracing::info;
+use tracing::{info, warn, error};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
@@ -36,20 +36,23 @@ pub struct ControlCommand {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SystemStatus {
     pub data_collection_active: bool,
+    pub device_connected: bool,
     pub connected_clients: usize,
     pub packets_processed: u64,
     pub uptime_seconds: u64,
     pub memory_usage_mb: f64,
+    pub connection_type: String,
 }
 
 #[derive(Clone)]
 pub struct AppState {
     cfg: Config,
-    ipc: Arc<IpcClient>,
+    device_command_tx: mpsc::UnboundedSender<DeviceCommand>,
     start_at: Instant,
     packets_rx: watch::Receiver<u64>,
     clients_rx: watch::Receiver<usize>,
     collecting: Arc<Mutex<bool>>,
+    device_connected: Arc<Mutex<bool>>,
     file_manager: Arc<FileManager>,
 }
 
@@ -60,7 +63,7 @@ pub struct WebServer {
 impl WebServer {
     pub fn new(
         config: Config,
-        ipc: Arc<IpcClient>,
+        device_command_tx: mpsc::UnboundedSender<DeviceCommand>,
         packets_rx: watch::Receiver<u64>,
         clients_rx: watch::Receiver<usize>,
     ) -> Self {
@@ -69,11 +72,12 @@ impl WebServer {
         Self {
             state: AppState {
                 cfg: config,
-                ipc,
+                device_command_tx,
                 start_at: Instant::now(),
                 packets_rx,
                 clients_rx,
                 collecting: Arc::new(Mutex::new(false)),
+                device_connected: Arc::new(Mutex::new(false)),
                 file_manager: Arc::new(fm),
             },
         }
@@ -99,13 +103,19 @@ impl WebServer {
             .route("/api/control/start", post(start_collection))
             .route("/api/control/stop", post(stop_collection))
             .route("/api/control/status", get(get_status))
-            .route("/api/control/request_status", post(request_reader_status))
-            // 文件管理API（接入 FileManager）
+            .route("/api/control/ping", post(send_ping))
+            .route("/api/control/device_info", post(get_device_info))
+            .route("/api/control/configure", post(configure_stream))
+            .route("/api/control/continuous_mode", post(set_continuous_mode))
+            .route("/api/control/trigger_mode", post(set_trigger_mode))
+            // 文件管理API
             .route("/api/files", get(list_files))
             .route("/api/files/:filename", get(download_file))
             .route("/api/files/save", post(save_waveform))
             // 健康检查
             .route("/health", get(health_check))
+            // 根路径重定向到API文档
+            .route("/", get(api_info))
             .with_state(self.state.clone())
             .layer(ServiceBuilder::new().layer(CorsLayer::permissive()))
     }
@@ -114,20 +124,17 @@ impl WebServer {
 /// ============ API 处理函数 ============
 
 async fn start_collection(State(st): State<AppState>) -> Result<Json<ApiResponse<String>>, StatusCode> {
-    tracing::info!("Received start collection command");
+    info!("API: Start collection requested");
+    
     {
         let mut c = st.collecting.lock().await;
         *c = true;
     }
-    // 通过 IPC 转发命令：开始流=0x12
-    let msg = json!({
-        "id":"web_start",
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "type":"FORWARD_TO_DEVICE",
-        "payload": { "command_id":"0x12", "data":"" }
-    });
-    if let Err(err) = st.ipc.send_json(&msg) {
-        tracing::warn!("IPC send failed: {}", err);
+    
+    // 发送启动流命令
+    if let Err(err) = st.device_command_tx.send(DeviceCommand::StartStream) {
+        error!("Failed to send start command: {}", err);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     Ok(Json(ApiResponse {
@@ -139,20 +146,17 @@ async fn start_collection(State(st): State<AppState>) -> Result<Json<ApiResponse
 }
 
 async fn stop_collection(State(st): State<AppState>) -> Result<Json<ApiResponse<String>>, StatusCode> {
-    tracing::info!("Received stop collection command");
+    info!("API: Stop collection requested");
+    
     {
         let mut c = st.collecting.lock().await;
         *c = false;
     }
-    // 停止流=0x13
-    let msg = json!({
-        "id":"web_stop",
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "type":"FORWARD_TO_DEVICE",
-        "payload": { "command_id":"0x13", "data":"" }
-    });
-    if let Err(err) = st.ipc.send_json(&msg) {
-        tracing::warn!("IPC send failed: {}", err);
+    
+    // 发送停止流命令
+    if let Err(err) = st.device_command_tx.send(DeviceCommand::StopStream) {
+        error!("Failed to send stop command: {}", err);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     Ok(Json(ApiResponse {
@@ -163,21 +167,109 @@ async fn stop_collection(State(st): State<AppState>) -> Result<Json<ApiResponse<
     }))
 }
 
-async fn request_reader_status(State(st): State<AppState>) -> Result<Json<ApiResponse<String>>, StatusCode> {
-    // 主动向 data-reader 请求状态
-    let msg = json!({
-        "id":"web_status_req",
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "type":"REQUEST_READER_STATUS",
-        "payload": {}
-    });
-    if let Err(err) = st.ipc.send_json(&msg) {
-        tracing::warn!("IPC send failed: {}", err);
-        return Err(StatusCode::BAD_GATEWAY);
+async fn send_ping(State(st): State<AppState>) -> Result<Json<ApiResponse<String>>, StatusCode> {
+    info!("API: Ping device requested");
+    
+    // 发送PING命令
+    if let Err(err) = st.device_command_tx.send(DeviceCommand::Ping) {
+        error!("Failed to send ping command: {}", err);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
+    
     Ok(Json(ApiResponse {
         success: true,
-        data: Some("Status requested".to_string()),
+        data: Some("Ping command sent to device".to_string()),
+        error: None,
+        timestamp: chrono::Utc::now().timestamp_millis(),
+    }))
+}
+
+async fn get_device_info(State(st): State<AppState>) -> Result<Json<ApiResponse<String>>, StatusCode> {
+    info!("API: Device info requested");
+    
+    // 发送获取设备信息命令
+    if let Err(err) = st.device_command_tx.send(DeviceCommand::GetDeviceInfo) {
+        error!("Failed to send device info command: {}", err);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some("Device info request sent".to_string()),
+        error: None,
+        timestamp: chrono::Utc::now().timestamp_millis(),
+    }))
+}
+
+async fn set_continuous_mode(State(st): State<AppState>) -> Result<Json<ApiResponse<String>>, StatusCode> {
+    info!("API: Set continuous mode requested");
+    
+    // 发送连续模式命令
+    if let Err(err) = st.device_command_tx.send(DeviceCommand::SetModeContinuous) {
+        error!("Failed to send continuous mode command: {}", err);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some("Continuous mode command sent".to_string()),
+        error: None,
+        timestamp: chrono::Utc::now().timestamp_millis(),
+    }))
+}
+
+async fn set_trigger_mode(State(st): State<AppState>) -> Result<Json<ApiResponse<String>>, StatusCode> {
+    info!("API: Set trigger mode requested");
+    
+    // 发送触发模式命令
+    if let Err(err) = st.device_command_tx.send(DeviceCommand::SetModeTrigger) {
+        error!("Failed to send trigger mode command: {}", err);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some("Trigger mode command sent".to_string()),
+        error: None,
+        timestamp: chrono::Utc::now().timestamp_millis(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfigureRequest {
+    channels: Vec<ChannelConfigRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelConfigRequest {
+    channel_id: u8,
+    sample_rate: u32,
+    format: u8,
+}
+
+async fn configure_stream(
+    State(st): State<AppState>,
+    Json(req): Json<ConfigureRequest>,
+) -> Result<Json<ApiResponse<String>>, StatusCode> {
+    info!("API: Configure stream requested with {} channels", req.channels.len());
+    
+    let channels: Vec<ChannelConfig> = req.channels.into_iter()
+        .map(|c| ChannelConfig {
+            channel_id: c.channel_id,
+            sample_rate: c.sample_rate,
+            format: c.format,
+        })
+        .collect();
+    
+    // 发送配置流命令
+    if let Err(err) = st.device_command_tx.send(DeviceCommand::ConfigureStream { channels }) {
+        error!("Failed to send configure command: {}", err);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some("Stream configuration sent".to_string()),
         error: None,
         timestamp: chrono::Utc::now().timestamp_millis(),
     }))
@@ -188,13 +280,16 @@ async fn get_status(State(st): State<AppState>) -> Result<Json<ApiResponse<Syste
     let packets = *st.packets_rx.borrow();
     let clients = *st.clients_rx.borrow();
     let collecting = *st.collecting.lock().await;
+    let device_connected = *st.device_connected.lock().await;
 
     let status = SystemStatus {
         data_collection_active: collecting,
+        device_connected,
         connected_clients: clients,
         packets_processed: packets,
         uptime_seconds: st.start_at.elapsed().as_secs(),
-        memory_usage_mb: 0.0, // 如需可加 sysinfo 读取
+        memory_usage_mb: get_memory_usage_mb(),
+        connection_type: st.cfg.device.connection_type.clone(),
     };
 
     Ok(Json(ApiResponse {
@@ -215,20 +310,20 @@ async fn list_files(
     State(st): State<AppState>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<ApiResponse<Vec<FileInfo>>>, StatusCode> {
-    match st
-        .file_manager
-        .list_files_in(q.dir.as_deref())
-    {
-        Ok(files) => Ok(Json(ApiResponse {
-            success: true,
-            data: Some(files),
-            error: None,
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        })),
-        Err(e) => Err({
-            tracing::warn!("list_files failed: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        }),
+    match st.file_manager.list_files_in(q.dir.as_deref()) {
+        Ok(files) => {
+            info!("Listed {} files in dir: {:?}", files.len(), q.dir);
+            Ok(Json(ApiResponse {
+                success: true,
+                data: Some(files),
+                error: None,
+                timestamp: chrono::Utc::now().timestamp_millis(),
+            }))
+        }
+        Err(e) => {
+            warn!("list_files failed: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }
 
@@ -239,15 +334,19 @@ async fn download_file(
 ) -> Result<Response, StatusCode> {
     match st.file_manager.read_file(&filename) {
         Ok(bytes) => {
-            let cd = format!("attachment; filename=\"{}\"", filename.split(|c| c == '/' || c == '\\').last().unwrap_or(&filename));
+            let cd = format!(
+                "attachment; filename=\"{}\"", 
+                filename.split(|c| c == '/' || c == '\\').last().unwrap_or(&filename)
+            );
             let headers = [
                 (header::CONTENT_TYPE, "application/octet-stream"),
                 (header::CONTENT_DISPOSITION, cd.as_str()),
             ];
+            info!("Downloaded file: {} ({} bytes)", filename, bytes.len());
             Ok((headers, bytes).into_response())
         }
         Err(e) => {
-            tracing::warn!("download_file failed: {} ({})", filename, e);
+            warn!("download_file failed: {} ({})", filename, e);
             Err(StatusCode::NOT_FOUND)
         }
     }
@@ -274,7 +373,7 @@ async fn save_waveform(
     let bytes = match BASE64.decode(req.base64.as_bytes()) {
         Ok(b) => b,
         Err(e) => {
-            tracing::warn!("save_waveform: base64 decode error: {}", e);
+            warn!("save_waveform: base64 decode error: {}", e);
             return Err(StatusCode::BAD_REQUEST);
         }
     };
@@ -295,9 +394,10 @@ async fn save_waveform(
 
     match st.file_manager.save_at(req.dir.as_deref(), &data) {
         Ok(saved_rel_path) => {
-            // 限制 base 根目录下的总文件数（不递归）；如需全局递归可改 file_manager
+            // 限制 base 根目录下的总文件数（不递归）
             let _ = st.file_manager.cleanup_old_files(st.cfg.storage.max_files);
 
+            info!("Saved file: {} ({} bytes)", saved_rel_path, data.bytes.len());
             Ok(Json(ApiResponse {
                 success: true,
                 data: Some(saved_rel_path),
@@ -306,23 +406,64 @@ async fn save_waveform(
             }))
         }
         Err(e) => {
-            tracing::warn!("save_waveform failed: {}", e);
+            error!("save_waveform failed: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
 
-fn make_auto_filename(sto: &StorageConfig) -> String {
-    let ts = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-    // prefix_YYYYMMDD_HHMMSS.ext
-    format!("{}_{}{}", sto.default_prefix, ts, sto.default_ext)
-}
-
-async fn health_check() -> Json<ApiResponse<String>> {
+async fn health_check() -> Json<ApiResponse<serde_json::Value>> {
     Json(ApiResponse {
         success: true,
-        data: Some("OK".to_string()),
+        data: Some(json!({
+            "status": "healthy",
+            "service": "data-processor",
+            "version": "2.0",
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        })),
         error: None,
         timestamp: chrono::Utc::now().timestamp_millis(),
     })
+}
+
+async fn api_info() -> Json<serde_json::Value> {
+    Json(json!({
+        "name": "Integrated Data Processor API",
+        "version": "2.0",
+        "description": "High-performance data acquisition and processing system",
+        "endpoints": {
+            "health": "/health",
+            "status": "/api/control/status",
+            "start": "/api/control/start",
+            "stop": "/api/control/stop",
+            "ping": "/api/control/ping",
+            "files": {
+                "list": "/api/files?dir=<optional>",
+                "download": "/api/files/{filename}",
+                "save": "/api/files/save"
+            },
+            "websocket": "ws://<host>:<port>"
+        },
+        "documentation": "https://github.com/your-repo/data-processor"
+    }))
+}
+
+// 辅助函数
+fn make_auto_filename(sto: &StorageConfig) -> String {
+    let ts = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    format!("{}_{}{}", sto.default_prefix, ts, sto.default_ext)
+}
+
+fn get_memory_usage_mb() -> f64 {
+    // 简单的内存使用统计，可以用sysinfo库获取更精确的数据
+    #[cfg(target_os = "windows")]
+    {
+        // Windows平台可以通过GetProcessMemoryInfo获取
+        0.0
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Unix平台可以读取/proc/self/status
+        0.0
+    }
 }

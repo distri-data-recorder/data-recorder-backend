@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>data-processor 测试页</title>
+<style>
+  :root{--bg:#0b1020;--card:#151b2e;--muted:#8aa0c5;--text:#e6eefc;--ok:#27c93f;--warn:#ffbd2e;--err:#ff5f56;--accent:#5aa6ff}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Arial}
+  h2{margin:0 0 8px}
+  .wrap{display:grid;grid-template-columns:380px 1fr;gap:12px;padding:12px}
+  .card{background:var(--card);border:1px solid #223055;border-radius:14px;padding:12px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  input,button,textarea,select{background:#0f1630;border:1px solid #27365d;border-radius:10px;color:var(--text);padding:8px 10px;font:inherit;outline:none}
+  textarea{width:100%;min-height:90px}
+  input:focus,textarea:focus,select:focus{border-color:var(--accent)}
+  button{cursor:pointer}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #2b3b6b;color:#9fb5e5;font-size:12px}
+  .mono{font-family:ui-monospace,Consolas,Menlo,monospace}
+  #log{height:190px;overflow:auto;background:#0b1228;border:1px solid #1e2a4a;border-radius:10px;padding:8px;font:12px/1.4 ui-monospace,Consolas,Menlo,monospace;white-space:pre-wrap}
+  #chart{width:100%;height:280px;background:#0b1228;border:1px solid #1e2a4a;border-radius:10px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:6px;border-bottom:1px solid #213154;font-size:13px}
+  a{color:#a8c7ff}
+  .hint{color:#9ab0d8}
+  .btns button{margin-right:6px;margin-bottom:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h2>连接</h2>
+    <div class="row" style="margin-bottom:6px">
+      <label>HTTP
+        <input id="httpBase" value="http://127.0.0.1:8080" style="min-width:240px">
+      </label>
+    </div>
+    <div class="row" style="margin-bottom:6px">
+      <label>WebSocket
+        <input id="wsUrl" value="ws://127.0.0.1:8081" style="min-width:240px">
+      </label>
+      <button id="btnConn">连接</button>
+      <button id="btnClose">断开</button>
+    </div>
+    <div class="row">
+      <span class="pill">WS 状态：<b id="wsState">DISCONNECTED</b></span>
+      <span class="pill">消息速率：<b id="rate">0</b> msg/s</span>
+      <span class="pill">字节速率：<b id="brate">0</b> B/s</span>
+      <span class="pill">累计：<b id="count">0</b></span>
+      <span class="pill">最近序号：<b id="seq">-</b></span>
+    </div>
+  </div>
+
+  <div class="card" style="grid-column: span 2">
+    <h2>实时波形（自动寻找数值数组）</h2>
+    <canvas id="chart"></canvas>
+    <div class="hint mono" id="seriesHint">等待数据…</div>
+  </div>
+
+  <div class="card">
+    <h2>控制接口</h2>
+    <div class="btns">
+      <button data-cmd="ping">PING</button>
+      <button data-cmd="info">DEVICE_INFO</button>
+      <button data-cmd="cont">连续模式</button>
+      <button data-cmd="trig">触发模式</button>
+      <button data-cmd="start">开始采集</button>
+      <button data-cmd="stop">停止采集</button>
+      <button id="btnStatus">读取状态</button>
+    </div>
+    <div style="margin-top:8px">
+      <div class="hint" style="margin-bottom:4px">配置示例（POST /api/control/configure）</div>
+      <textarea id="cfgJson">{
+  "channels": [
+    { "channel_id": 0, "sample_rate": 48000, "format": 1 }
+  ]
+}</textarea>
+      <button id="btnCfg">下发配置</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>文件接口</h2>
+    <div class="row" style="margin-bottom:8px">
+      <input id="listDir" placeholder="可选：子目录，如 logs 或 data" style="min-width:220px">
+      <button id="btnList">列出文件</button>
+    </div>
+    <div id="files"></div>
+    <hr style="border:0;border-top:1px solid #223055;margin:12px 0">
+    <div class="hint" style="margin-bottom:4px">保存当前波形（CSV → Base64 → /api/files/save）</div>
+    <div class="row" style="margin-bottom:6px">
+      <input id="saveDir" placeholder="可选保存目录，例如 data">
+      <input id="saveName" placeholder="可选文件名，例如 test.csv">
+      <button id="btnSave">保存当前波形</button>
+    </div>
+    <div class="hint mono" id="saveResult"></div>
+  </div>
+
+  <div class="card" style="grid-column: span 2">
+    <h2>最新一帧（JSON 预览）</h2>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let ws=null, total=0, bytes=0, lastCount=0,lastBytes=0;
+let seriesBuffer=null, seriesName=null, lastObj=null;
+
+const chart = $('#chart');
+const ctx = chart.getContext('2d');
+let pending=false;
+function resize(){ const dpr=window.devicePixelRatio||1; const w=chart.clientWidth, h=chart.clientHeight; chart.width=w*dpr; chart.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); draw(); }
+window.addEventListener('resize', resize); resize();
+
+function setState(s){ $('#wsState').textContent=s; }
+function logPreview(objStr){
+  const box = $('#log'); const max = 6000;
+  box.textContent = objStr.length>max ? (objStr.slice(0,max)+'\n…(truncated)') : objStr;
+}
+function findNumericArray(x, path=""){
+  if(Array.isArray(x) && x.length>=16 && x.every(v => typeof v === 'number' && Number.isFinite(v))){ return {arr:x, name:path||'data'}; }
+  if (x && typeof x === 'object'){
+    const keys = Object.keys(x);
+    // 常见字段优先
+    for (const k of ['data','samples','y','values']) {
+      if (k in x) {
+        const v = x[k];
+        const r = findNumericArray(v, path? (path+"."+k) : k);
+        if (r) return r;
+      }
+    }
+    for (const k of keys){
+      const r = findNumericArray(x[k], path? (path+"."+k) : k);
+      if(r) return r;
+    }
+  }
+  return null;
+}
+function pickSequence(obj){
+  for (const key of ['sequence','seq','frame_id','frame','index']) { if (obj && Object.prototype.hasOwnProperty.call(obj,key)) return obj[key]; }
+  return '-';
+}
+
+
+function draw(){
+  pending=false;
+  const w=chart.clientWidth, h=chart.clientHeight;
+  ctx.clearRect(0,0,w,h);
+  if(!seriesBuffer || seriesBuffer.length<2){ return; }
+  const data = seriesBuffer;
+  const N = Math.min(4096, data.length);
+  const step = data.length / N;
+  const sampled = new Array(N);
+  for(let i=0;i<N;i++) sampled[i] = data[Math.floor(i*step)];
+  let min=Infinity,max=-Infinity; for(const v of sampled){ if(v<min) min=v; if(v>max) max=v; }
+  if(min===max){ min-=1; max+=1; }
+
+  // 轴
+  ctx.strokeStyle="#2a3a6a"; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(40,h-30); ctx.lineTo(w-10,h-30); ctx.moveTo(40,10); ctx.lineTo(40,h-30); ctx.stroke();
+
+  // 折线
+  const plotW = w-50, plotH = h-40, ox=40, oy=h-30;
+  ctx.strokeStyle="#5aa6ff"; ctx.lineWidth=1.2;
+  ctx.beginPath();
+  for(let i=0;i<N;i++){
+    const x = ox + (i/(N-1))*plotW;
+    const y = oy - ((sampled[i]-min)/(max-min))*plotH;
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  ctx.fillStyle="#9fb5e5"; ctx.font="12px ui-monospace,Consolas,Menlo,monospace";
+  ctx.fillText(`${seriesName||'data'}  n=${data.length}  shown=${N}`, 46, 18);
+  ctx.fillText(`min=${min.toFixed(3)}  max=${max.toFixed(3)}`, 46, 34);
+}
+function schedule(){ if(!pending){ pending=true; requestAnimationFrame(draw); } }
+
+function connect(){
+  if(ws && ws.readyState===1) return;
+  ws = new WebSocket($('#wsUrl').value.trim());
+  setState('CONNECTING');
+  ws.onopen = ()=> setState('CONNECTED');
+  ws.onclose = ()=> setState('DISCONNECTED');
+  ws.onerror = ()=> setState('ERROR');
+  ws.onmessage = e=>{
+    total++; $('#count').textContent=String(total);
+    bytes += (typeof e.data === 'string') ? e.data.length : 0;
+    try{
+      const obj = JSON.parse(e.data);
+      lastObj = obj;
+      const seq = pickSequence(obj); $('#seq').textContent = String(seq);
+      logPreview(JSON.stringify(obj, null, 2));
+      const found = findNumericArray(obj);
+      if(found){ seriesBuffer = found.arr; seriesName = found.name; $('#seriesHint').textContent=`绘制字段：${seriesName}（长度 ${seriesBuffer.length}）`; schedule(); }
+      else { $('#seriesHint').textContent = `未在消息中找到数值数组可绘图（仅展示 JSON）`; }
+    }catch{ logPreview(String(e.data)); }
+  };
+}
+$('#btnConn').onclick = connect;
+$('#btnClose').onclick = ()=>{ if(ws){ ws.close(); ws=null; } };
+setInterval(()=>{ const c=total,b=bytes; $('#rate').textContent=String(c-lastCount); $('#brate').textContent=String(b-lastBytes); lastCount=c; lastBytes=b; }, 1000);
+
+// 控制接口
+async function postJson(path, body){
+  const base = $('#httpBase').value.trim().replace(/\/$/,'');
+  const res = await fetch(base+path, {method:'POST', headers:{'Content-Type':'application/json'}, body: body? JSON.stringify(body): undefined});
+  const j = await res.json().catch(()=>({}));
+  appendLog(`[HTTP ${res.status}] ${path}\n`+JSON.stringify(j,null,2));
+  return j;
+}
+function appendLog(t){
+  const box = $('#log'); box.textContent = (t+'\n\n'+box.textContent).slice(0,24000);
+}
+document.querySelectorAll('.btns button[data-cmd]').forEach(btn=>{
+  btn.onclick = ()=>{
+    const c = btn.dataset.cmd;
+    if(c==='ping') return postJson('/api/control/ping');
+    if(c==='info') return postJson('/api/control/device_info');
+    if(c==='cont') return postJson('/api/control/continuous_mode');
+    if(c==='trig') return postJson('/api/control/trigger_mode');
+    if(c==='start') return postJson('/api/control/start');
+    if(c==='stop') return postJson('/api/control/stop');
+  };
+});
+$('#btnCfg').onclick = ()=>{
+  let obj=null; try{ obj = JSON.parse($('#cfgJson').value); }catch(e){ return alert('配置 JSON 解析失败: '+e); }
+  postJson('/api/control/configure', obj);
+};
+$('#btnStatus').onclick = async ()=>{
+  const base = $('#httpBase').value.trim().replace(/\/$/,'');
+  const r = await fetch(base+'/api/control/status');
+  const j = await r.json().catch(()=>({}));
+  appendLog(`[HTTP ${r.status}] /api/control/status\n`+JSON.stringify(j,null,2));
+};
+
+// 文件接口
+$('#btnList').onclick = async ()=>{
+  const base = $('#httpBase').value.trim().replace(/\/$/,'');
+  const dir = $('#listDir').value.trim();
+  const url = base + '/api/files' + (dir? ('?dir='+encodeURIComponent(dir)) : '');
+  const res = await fetch(url);
+  const j = await res.json().catch(()=>({}));
+  renderFiles(j);
+  appendLog(`[HTTP ${res.status}] GET ${url}\n`+JSON.stringify(j,null,2));
+};
+function renderFiles(j){
+  const box = $('#files'); const base = $('#httpBase').value.trim().replace(/\/$/,'');
+  if(!j || !j.data || !Array.isArray(j.data)){ box.innerHTML = '<div class="hint">无数据</div>'; return; }
+  const rows = j.data.map(f=>{
+    const dl = `${base}/api/files/${encodeURIComponent(f.filename)}`;
+    const size = (f.size>=1024)? ( (f.size/1024).toFixed(1)+' KB' ) : (f.size+' B');
+    return `<tr><td class="mono">${f.filename}</td><td>${size}</td><td>${f.modified_at||''}</td><td><a href="${dl}" target="_blank">下载</a></td></tr>`;
+  }).join('');
+  box.innerHTML = `<table><thead><tr><th>文件名</th><th>大小</th><th>修改时间</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+$('#btnSave').onclick = async ()=>{
+  if(!seriesBuffer || seriesBuffer.length===0){ return alert('当前没有可保存的波形'); }
+  // 将数值数组保存为 CSV 文本，然后以 Base64 发送给 /api/files/save
+  const csv = 'value\n' + seriesBuffer.map(v=>String(v)).join('\n');
+  const b64 = btoa(unescape(encodeURIComponent(csv))); // UTF-8 → Base64
+  const base = $('#httpBase').value.trim().replace(/\/$/,'');
+  const body = {
+    b64_data: b64,
+    dir: ($('#saveDir').value.trim() || undefined),
+    filename: ($('#saveName').value.trim() || undefined),
+    ext: '.csv'
+  };
+  const res = await fetch(base+'/api/files/save', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  const j = await res.json().catch(()=>({}));
+  $('#saveResult').textContent = JSON.stringify(j, null, 2);
+  appendLog(`[HTTP ${res.status}] POST /api/files/save\n`+JSON.stringify(j,null,2));
+};
+</script>
+</body>
+</html>
