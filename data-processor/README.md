@@ -1,280 +1,568 @@
----
+# Data Processor
 
-# data-processor
+A high-performance data acquisition and processing system built in Rust, designed for real-time sensor data collection, processing, and distribution.
 
-Rust 实现的数据处理后台，负责从 `data-reader` 共享内存读取原始帧、做基础整形并通过 WebSocket/HTTP 提供给前端；同时通过 Windows 命名管道与 `data-reader` 双向通信。
+## Features
 
-## 功能一览
+- **Direct Device Communication**: Supports both serial (USB-CDC) and TCP socket connections
+- **Real-time Data Processing**: Filtering, quality assessment, and format conversion
+- **WebSocket Streaming**: Live data distribution to multiple clients
+- **REST API**: Comprehensive control and monitoring interface
+- **File Management**: Secure data storage with automatic cleanup
+- **Cross-platform**: Windows, Linux, and macOS support
 
-* **共享内存读取**：读取 C 端 `data-reader` 写入的环形缓冲区（含头信息与 `ADCDataPacket` 数组）
-* **数据广播**：处理后的数据以 JSON 通过 **WebSocket** 广播给所有订阅者
-* **HTTP API**：
+## Quick Start
 
-  * 采集控制：`/api/control/start|stop|request_status`、汇总状态 `/api/control/status`
-  * 文件管理：列举 `/api/files`、下载 `/api/files/:filename`、保存 `/api/files/save`
-* **IPC**：经命名管道（默认 `\\.\pipe\data_reader_ipc`）转发控制命令、接收状态/日志
-* **可配置存储**：`DATA_DIR` 根目录；前端可在 `POST /api/files/save` 动态传 `dir`（相对子目录）与 `filename`
-* **安全**：文件接口仅允许写入 `DATA_DIR` 下，拒绝绝对路径/盘符/`..` 等路径逃逸
+### Installation
 
----
+```bash
+# Clone the repository
+git clone <repository-url>
+cd data-processor
 
-## 环境要求
+# Build the application
+cargo build --release
 
-* Windows 10/11 x64
-* Rust（`rustup` + **windows-gnu** 或 **windows-msvc** 工具链均可）
-* 已编译好的 `data-reader`（串口或 socket 输入均可）
-
-> 你已在本机完成编译，可跳过构建环节，直接看“启动与联调”。
-
----
-
-## 配置
-
-支持通过环境变量覆盖默认参数（如不设置则用默认值）：
-
-| 变量名           | 含义                   | 默认值                   |
-| ------------- | -------------------- | --------------------- |
-| `WEB_HOST`    | HTTP 监听地址            | `127.0.0.1`           |
-| `WEB_PORT`    | HTTP 端口              | `8080`                |
-| `WS_HOST`     | WebSocket 监听地址       | `127.0.0.1`           |
-| `WS_PORT`     | WebSocket 端口         | `8081`                |
-| `SHM_NAME`    | 共享内存名                | `ADC_DATA_SHARED_MEM` |
-| `DATA_DIR`    | 文件根目录                | `./data`              |
-| `FILE_PREFIX` | 自动命名的文件名前缀           | `wave`                |
-| `FILE_EXT`    | 自动命名扩展名              | `.bin`                |
-| `MAX_FILES`   | `DATA_DIR` 根目录最多保留文件 | `200`                 |
-
-PowerShell 示例（可按需设置）：
-
-```powershell
-$env:WEB_HOST="0.0.0.0"
-$env:WEB_PORT="8080"
-$env:WS_HOST="0.0.0.0"
-$env:WS_PORT="8081"
-$env:SHM_NAME="ADC_DATA_SHARED_MEM"
-$env:DATA_DIR="D:\recorder\data"
-$env:FILE_PREFIX="rec"
-$env:FILE_EXT=".dat"
-$env:MAX_FILES="500"
+# Run with default configuration
+cargo run --release
 ```
 
----
+### Configuration
 
-## 启动与联调
+Configure via environment variables:
 
-### 1) 启动 data-reader
+```bash
+# Device connection
+export DEVICE_TYPE=socket           # "serial" or "socket"
+export SOCKET_ADDRESS=127.0.0.1:9001  # For socket mode
+export SERIAL_PORT=COM7             # For serial mode
+export BAUD_RATE=115200
 
-* **串口模式**（例：COM7）
+# Web services
+export WEB_HOST=127.0.0.1
+export WEB_PORT=8080
+export WS_HOST=127.0.0.1
+export WS_PORT=8081
 
-  ```powershell
-  C:\path\to\serialread.exe 7
-  ```
-* **Socket 模式**（接收 test-sender，默认 `127.0.0.1:9001`，以你们文档为准）
-
-  ```powershell
-  C:\path\to\serialread.exe -s
-  ```
-
-> 确认 data-reader 正常运行后再启动 data-processor。它会创建共享内存与命名管道。
-
-### 2) 启动 data-processor
-
-* 发布版：
-
-  ```powershell
-  .\target\release\data-processor.exe
-  ```
-
-启动日志中可见：
-
-* “Connected to shared memory”
-* HTTP server on `WEB_HOST:WEB_PORT`
-* WebSocket server on `WS_HOST:WS_PORT`
-
----
-
-## 快速自测（HTTP）
-
-下面用 `curl.exe` 演示（PowerShell 可直接执行）。
-
-### 健康检查
-
-```powershell
-curl http://127.0.0.1:8080/health
+# Storage
+export DATA_DIR=./data
+export FILE_PREFIX=wave
+export FILE_EXT=.bin
+export MAX_FILES=200
 ```
 
-### 查看汇总状态
+### Running with Device Simulator
 
-```powershell
-curl http://127.0.0.1:8080/api/control/status
+```bash
+# Terminal 1: Start device simulator
+cd device-simulator-v2.1
+make run
+
+# Terminal 2: Start data processor
+cd data-processor  
+cargo run --release
 ```
 
-### 请求 data-reader 状态（通过 IPC）
+Access the system:
+- Web API: http://127.0.0.1:8080
+- WebSocket: ws://127.0.0.1:8081
 
-```powershell
-curl -X POST http://127.0.0.1:8080/api/control/request_status
+## API Documentation
+
+### System Status
+
+#### Get System Status
+```http
+GET /api/control/status
 ```
 
-### 开始 / 停止采集
-
-```powershell
-curl -X POST http://127.0.0.1:8080/api/control/start
-curl -X POST http://127.0.0.1:8080/api/control/stop
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "data_collection_active": false,
+    "device_connected": true,
+    "connected_clients": 2,
+    "packets_processed": 15420,
+    "uptime_seconds": 3600,
+    "memory_usage_mb": 45.2,
+    "connection_type": "socket"
+  },
+  "error": null,
+  "timestamp": 1704067200000
+}
 ```
 
----
+### Device Control
 
-## WebSocket 数据流
-
-使用 **wscat**（Node 工具）或浏览器连接：
-
-```powershell
-# 安装（如未安装）
-npm i -g wscat
-
-# 连接
-wscat -c ws://127.0.0.1:8081
+#### Start Data Collection
+```http
+POST /api/control/start
 ```
 
-看到形如：
+**Response:**
+```json
+{
+  "success": true,
+  "data": "Data collection started",
+  "error": null,
+  "timestamp": 1704067200000
+}
+```
+
+#### Stop Data Collection
+```http
+POST /api/control/stop
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": "Data collection stopped",
+  "error": null,
+  "timestamp": 1704067200000
+}
+```
+
+#### Ping Device
+```http
+POST /api/control/ping
+```
+
+Tests device connectivity and responsiveness.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": "Ping command sent to device",
+  "error": null,
+  "timestamp": 1704067200000
+}
+```
+
+#### Get Device Information
+```http
+POST /api/control/device_info
+```
+
+Requests detailed device capabilities and information.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": "Device info request sent",
+  "error": null,
+  "timestamp": 1704067200000
+}
+```
+
+### Device Mode Control
+
+#### Set Continuous Mode
+```http
+POST /api/control/continuous_mode
+```
+
+Configures the device for continuous data streaming.
+
+#### Set Trigger Mode
+```http
+POST /api/control/trigger_mode
+```
+
+Configures the device for event-triggered data collection.
+
+#### Configure Data Stream
+```http
+POST /api/control/configure
+
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "channels": [
+    {
+      "channel_id": 0,
+      "sample_rate": 10000,
+      "format": 1
+    },
+    {
+      "channel_id": 1,
+      "sample_rate": 10000,
+      "format": 1
+    }
+  ]
+}
+```
+
+**Format Values:**
+- `1`: int16
+- `2`: int32  
+- `4`: float32
+
+### File Management
+
+#### List Files
+```http
+GET /api/files
+GET /api/files?dir=subfolder
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "filename": "wave_20240101_143022.bin",
+      "size_bytes": 2048000,
+      "created_at": 1704110422000,
+      "file_type": "binary"
+    }
+  ],
+  "error": null,
+  "timestamp": 1704067200000
+}
+```
+
+#### Download File
+```http
+GET /api/files/{filename}
+```
+
+Downloads the specified file. Supports subdirectory paths like `subfolder/file.bin`.
+
+**Response:** Binary file content with appropriate headers.
+
+#### Save Data File
+```http
+POST /api/files/save
+
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "dir": "measurements/2024-01-01",
+  "filename": "test_data.bin",
+  "base64": "AAABAAACAAADAAAEAAAF..."
+}
+```
+
+**Parameters:**
+- `dir` (optional): Subdirectory path relative to data directory
+- `filename` (optional): Custom filename, auto-generated if not provided
+- `base64` (required): Base64-encoded file content
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": "measurements/2024-01-01/test_data.bin",
+  "error": null,
+  "timestamp": 1704067200000
+}
+```
+
+### Health Check
+
+#### System Health
+```http
+GET /health
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "status": "healthy",
+    "service": "data-processor",
+    "version": "2.0",
+    "timestamp": "2024-01-01T12:00:00Z"
+  },
+  "error": null,
+  "timestamp": 1704067200000
+}
+```
+
+### API Information
+```http
+GET /
+```
+
+Returns API documentation and available endpoints.
+
+## WebSocket Interface
+
+### Connection
+Connect to: `ws://{host}:{port}`
+
+### Data Messages
+
+Real-time processed data is streamed as JSON:
 
 ```json
 {
   "type": "data",
-  "timestamp": 1693045250123,
-  "sequence": 123,
-  "channel_count": 8,
-  "sample_rate": 10000,
-  "data": [ ... ],
-  "metadata": { ... }
+  "timestamp": 1704067200000,
+  "sequence": 12345,
+  "channel_count": 2,
+  "sample_rate": 10000.0,
+  "data": [1.23, 1.24, 1.25, 1.26, ...],
+  "metadata": {
+    "packet_count": 150,
+    "processing_time_us": 120,
+    "data_quality": {
+      "status": "Good"
+    }
+  }
 }
 ```
 
-> 如果暂时没有数据，检查 data-reader 是否已连接设备或 test-sender 是否在推送。
-
----
-
-## 文件接口自测
-
-### 1) 保存（前端可自定义目录与文件名）
-
-`POST /api/files/save`
-
-* `dir`：相对 `DATA_DIR` 的子目录（可选）
-* `filename`：文件名（可选；不传则自动命名）
-* `base64`：文件内容的 Base64
-
-**示例 A：只指定目录，自动命名**
-
-```powershell
-# 准备要保存的字节（示例：将 "hello world" 转为 base64）
-$b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("hello world"))
-
-# 提交
-curl -H "Content-Type: application/json" -X POST http://127.0.0.1:8080/api/files/save `
-  -d "{""dir"":""projectA/run_001"",""base64"":""$b64""}"
-```
-
-成功返回：
+### Welcome Message
+Upon connection, clients receive:
 
 ```json
-{ "success": true, "data": "projectA/run_001/wave_YYYYMMDD_HHMMSS.bin", ... }
+{
+  "type": "welcome",
+  "client_id": "550e8400-e29b-41d4-a716-446655440000",
+  "timestamp": 1704067200000
+}
 ```
 
-**示例 B：自定义目录 + 文件名**
+### Error Messages
+System errors are broadcasted:
 
-```powershell
-$b64 = [Convert]::ToBase64String([byte[]](1..10)) # 随机数据示例
-curl -H "Content-Type: application/json" -X POST http://127.0.0.1:8080/api/files/save `
-  -d "{""dir"":""projectA/run_002"",""filename"":""ch1_0001.dat"",""base64"":""$b64""}"
+```json
+{
+  "type": "error",
+  "error_code": "DEVICE_DISCONNECTED",
+  "message": "Device connection lost",
+  "timestamp": 1704067200000
+}
 ```
 
-> 安全校验：仅允许相对路径；拒绝绝对路径/盘符/`..`。保存路径始终限制在 `DATA_DIR` 下。
-> 超出 `MAX_FILES`（针对根目录）会自动清理旧文件（可按需拓展到递归清理）。
+## Error Handling
 
-### 2) 列文件
+### HTTP Status Codes
+- `200 OK`: Successful operation
+- `400 Bad Request`: Invalid request parameters
+- `404 Not Found`: File or resource not found
+- `500 Internal Server Error`: System error
 
-* 根目录：
-
-  ```powershell
-  curl http://127.0.0.1:8080/api/files
-  ```
-* 子目录：
-
-  ```powershell
-  curl "http://127.0.0.1:8080/api/files?dir=projectA/run_001"
-  ```
-
-### 3) 下载文件（支持子目录）
-
-```powershell
-# 将文件保存为本地 out.bin
-curl -o out.bin http://127.0.0.1:8080/api/files/projectA/run_001/ch1_0001.dat
+### Error Response Format
+```json
+{
+  "success": false,
+  "data": null,
+  "error": "Detailed error message",
+  "timestamp": 1704067200000
+}
 ```
 
----
+### Common Error Scenarios
 
-## 与 test-sender 联调（可选）
+#### Device Connection Issues
+- **Symptom**: API calls return errors, no data streaming
+- **Solution**: Check device connection, verify configuration
+- **Endpoints**: Use `/api/control/ping` to test connectivity
 
-若 `data-reader` 以 `-s`（socket）模式运行，按 test-sender 的 README 发送模拟帧到它监听的端口（默认 9001）。
-此时 `data-processor` 的 WebSocket 客户端应收到持续的 `"type":"data"` 消息，`/api/control/status` 的 `packets_processed` 也会持续增长。
+#### File Access Errors
+- **Symptom**: File operations fail with 500 errors
+- **Solution**: Check data directory permissions and disk space
+- **Prevention**: Monitor disk usage and configure appropriate limits
 
----
+#### WebSocket Connection Issues
+- **Symptom**: Clients can't connect or receive data
+- **Solution**: Verify WebSocket port and firewall settings
+- **Monitoring**: Check connected client count in status endpoint
 
-## 常见问题（FAQ）
+## Configuration Reference
 
-* **编译/链接（GNU 工具链）**
-  请确保使用 **MSYS2 mingw64** 或 `rustup` 自带的 `windows-gnu` 工具链。避免混用 w64devkit 导致 `-lgcc_eh` 等库缺失。
-  推荐 `.cargo/config.toml` 使用：
+### Environment Variables
 
-  ```toml
-  [build]
-  target = "x86_64-pc-windows-gnu"
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEVICE_TYPE` | socket | Connection type: "serial" or "socket" |
+| `SERIAL_PORT` | COM7 | Serial port for USB-CDC connection |
+| `SOCKET_ADDRESS` | 127.0.0.1:9001 | TCP socket address for testing |
+| `BAUD_RATE` | 115200 | Serial communication baud rate |
+| `WEB_HOST` | 127.0.0.1 | HTTP server bind address |
+| `WEB_PORT` | 8080 | HTTP server port |
+| `WS_HOST` | 127.0.0.1 | WebSocket server bind address |
+| `WS_PORT` | 8081 | WebSocket server port |
+| `DATA_DIR` | ./data | Data storage directory |
+| `FILE_PREFIX` | wave | Auto-generated filename prefix |
+| `FILE_EXT` | .bin | Auto-generated file extension |
+| `MAX_FILES` | 200 | Maximum files in data directory |
 
-  [target.x86_64-pc-windows-gnu]
-  linker = "x86_64-w64-mingw32-gcc"
-  ar = "x86_64-w64-mingw32-gcc-ar"
-  ```
+### Data Processing Settings
 
-* **启动顺序**
-  先启动 `data-reader`（创建共享内存/管道），再启动 `data-processor`。否则会因无法连接共享内存/管道而退出或重试。
+The system applies the following processing pipeline:
+1. **Protocol Parsing**: Validates frames and extracts data
+2. **Format Conversion**: Converts raw ADC values to engineering units
+3. **Filtering**: Applies 5-point moving average smoothing
+4. **Quality Assessment**: Evaluates data quality and flags anomalies
 
-* **HTTP/WS 端口被占用**
-  修改 `WEB_PORT` / `WS_PORT` 或关闭占用端口的程序。
+## Architecture
 
-* **保存文件失败**
-  检查 `DATA_DIR` 是否可写；确认 `dir` 与 `filename` 未包含绝对路径、盘符或 `..`。
-
-* **收不到数据**
-  确认设备或 test-sender 正在向 `data-reader` 输入数据；查看 `data-processor` 日志中是否有 `IPC status`/`IPC frame`；检查共享内存名 `SHM_NAME` 是否一致。
-
----
-
-## 开发者模式
-
-* 调试运行：
-
-  ```powershell
-  $env:RUST_LOG="info"
-  cargo run
-  ```
-* 一键修复部分告警：
-
-  ```powershell
-  cargo fix --bin data-processor
-  ```
-
----
-
-## 目录结构（关键文件）
+### Core Components
 
 ```
-src/
-  main.rs            # 程序入口，任务编排、IPC 订阅日志
-  ipc.rs             # 命名管道 JSON-Lines 客户端 + 共享内存读取
-  data_processing.rs # 从共享内存拉帧，组装 ProcessedData 并广播
-  websocket.rs       # WebSocket 广播服务
-  web_server.rs      # HTTP API（控制 + 文件）
-  file_manager.rs    # 文件安全存取（限定在 DATA_DIR 下）
-  config.rs          # 配置载入（默认 + 环境变量）
+data-processor/
+├── src/
+│   ├── main.rs                    # Application entry point
+│   ├── config.rs                  # Configuration management
+│   ├── device_communication.rs    # Device protocol implementation
+│   ├── data_processing.rs         # Real-time data processing
+│   ├── web_server.rs             # REST API server
+│   ├── websocket.rs              # WebSocket streaming
+│   └── file_manager.rs           # File storage management
+├── Cargo.toml                    # Rust dependencies
+└── .env                         # Environment configuration
 ```
+
+### Data Flow
+
+```
+Device → Protocol Parser → Data Processor → Quality Assessor → {WebSocket Broadcast, File Storage}
+                                         ↑
+                           REST API ← Web Server
+```
+
+### Concurrency Model
+
+- **Async/Await**: Built on Tokio async runtime
+- **Message Passing**: Uses channels for inter-task communication
+- **Shared State**: Minimal shared state with appropriate synchronization
+- **Backpressure**: Handles slow consumers gracefully
+
+## Deployment
+
+### Docker Deployment
+```bash
+# Build container
+docker build -t data-processor .
+
+# Run with environment variables
+docker run -d \
+  -p 8080:8080 \
+  -p 8081:8081 \
+  -v $(pwd)/data:/app/data \
+  -e DEVICE_TYPE=socket \
+  -e SOCKET_ADDRESS=host.docker.internal:9001 \
+  data-processor
+```
+
+### Production Considerations
+
+#### Security
+- Run with minimal privileges
+- Use firewall to restrict WebSocket access
+- Validate all file paths to prevent directory traversal
+- Monitor API access and rate limiting
+
+#### Performance
+- Allocate sufficient memory for data buffers
+- Monitor CPU usage during high-throughput operations  
+- Use SSD storage for data directory
+- Consider data retention policies
+
+#### Monitoring
+- Monitor system status endpoint regularly
+- Set up alerts for device disconnections
+- Track memory and disk usage
+- Log analysis for error patterns
+
+## Troubleshooting
+
+### Device Connection Issues
+
+**Problem**: Device not connecting
+```bash
+# Check device availability
+# For serial: verify port exists and permissions
+ls -la /dev/tty* # Linux
+# For socket: test connectivity
+telnet 127.0.0.1 9001
+```
+
+**Solution**: 
+- Verify device configuration
+- Check cable connections
+- Confirm device simulator is running
+
+### High Memory Usage
+
+**Problem**: Memory consumption growing over time
+- Monitor connected WebSocket clients
+- Check data directory size
+- Review buffer configurations
+
+**Solution**:
+- Disconnect unused WebSocket clients
+- Increase MAX_FILES cleanup threshold
+- Restart service if memory leak suspected
+
+### Data Quality Issues
+
+**Problem**: Poor data quality warnings
+- Check device signal integrity
+- Verify sampling rates are appropriate
+- Monitor for electrical interference
+
+**Solution**:
+- Adjust trigger thresholds
+- Use better shielded cables
+- Ground device properly
+
+## Development
+
+### Building from Source
+```bash
+# Install Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Clone and build
+git clone <repository>
+cd data-processor
+cargo build --release
+
+# Run tests
+cargo test
+
+# Check code style
+cargo clippy
+cargo fmt
+```
+
+### Adding Features
+
+1. **New API Endpoints**: Modify `web_server.rs`
+2. **Device Commands**: Extend `device_communication.rs` 
+3. **Data Processing**: Update `data_processing.rs`
+4. **Configuration**: Add to `config.rs` and environment variables
+
+### Protocol Extension
+
+To add new device commands:
+1. Define command ID in `device_communication.rs`
+2. Implement request/response handling
+3. Add corresponding API endpoint if needed
+4. Update protocol documentation
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Support
+
+For issues and feature requests, please use the project's issue tracker.
