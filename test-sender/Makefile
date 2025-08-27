@@ -1,20 +1,14 @@
-# Device Simulator v2.1 - Practical Makefile
-# Supports simulation and MCU modes with simple configuration
+# Device Simulator v2.1 - Simple Unix-compatible Makefile
+# Fixed for MSYS2/UCRT64 environments
 
 TARGET     := device-simulator
 VERSION    := 2.1
 BUILD      ?= debug
 MODE       ?= simulation
 
-# Build directories
-ifeq ($(OS),Windows_NT)
-    OUTPUT_DIR := build/windows/$(BUILD)
-    EXE_EXT    := .exe
-else
-    OUTPUT_DIR := build/linux/$(BUILD)
-    EXE_EXT    := 
-endif
-
+# Build directories - Unix style only
+OUTPUT_DIR := build/linux/$(BUILD)
+EXE_EXT    := 
 TARGET_EXE := $(OUTPUT_DIR)/$(TARGET)$(EXE_EXT)
 
 # Compiler setup based on mode
@@ -31,11 +25,7 @@ else
     # Simulation mode (default)
     CC         := gcc
     MODE_FLAGS := -DSIMULATION_MODE
-    ifeq ($(OS),Windows_NT)
-        LDFLAGS := -lws2_32 -lwinmm
-    else
-        LDFLAGS := -lpthread -lm
-    endif
+    LDFLAGS    := -lws2_32 -lwinmm
 endif
 
 # Source files
@@ -72,29 +62,13 @@ else
     CFLAGS := $(CFLAGS_BASE) -O0 -g -DDEBUG
 endif
 
-# Tools - Windows compatible
-ifeq ($(OS),Windows_NT)
-    MKDIR := if not exist
-    RM    := del /q
-    RMDIR := rmdir /s /q
-else
-    MKDIR := mkdir -p
-    RM    := rm -f
-    RMDIR := rm -rf
-endif
-
 # Default target
 all: $(TARGET_EXE)
 
-# Create directories - Windows compatible
+# Create directories
 $(OUTPUT_DIR):
-	@echo Creating build directories...
-ifeq ($(OS),Windows_NT)
-	@if not exist "$(OUTPUT_DIR)" mkdir "$(OUTPUT_DIR)"
-	@if not exist "$(OUTPUT_DIR)\protocol" mkdir "$(OUTPUT_DIR)\protocol"
-else
-	@$(MKDIR) $(OUTPUT_DIR)/protocol
-endif
+	@echo "Creating build directories..."
+	@mkdir -p $(OUTPUT_DIR)/protocol
 
 # Link target
 $(TARGET_EXE): $(OBJS) | $(OUTPUT_DIR)
@@ -109,14 +83,10 @@ ifeq ($(MODE),mcu)
 	@echo "Generated: $(TARGET).hex, $(TARGET).bin"
 endif
 
-# Compile source files - Windows compatible
+# Compile source files
 $(OUTPUT_DIR)/%.o: %.c $(HEADERS) | $(OUTPUT_DIR)
-	@echo [CC] $<
-ifeq ($(OS),Windows_NT)
-	@if not exist "$(dir $@)" mkdir "$(dir $@)"
-else
-	@$(MKDIR) $(dir $@)
-endif
+	@echo "[CC] $<"
+	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c "$<" -o "$@"
 
 # Run (simulation only)
@@ -179,33 +149,20 @@ install: $(TARGET_EXE)
 	@cp "$(TARGET_EXE)" "./$(TARGET)$(EXE_EXT)"
 	@echo "Installed: ./$(TARGET)$(EXE_EXT)"
 
-# Clean targets - Windows compatible
+# Clean targets
 clean:
-	@echo Cleaning build files...
-ifeq ($(OS),Windows_NT)
-	@if exist build rmdir /s /q build 2>nul || echo Nothing to clean
-	@if exist "$(TARGET).exe" del /q "$(TARGET).exe" 2>nul || echo Nothing to clean
-else
-	@$(RMDIR) build 2>/dev/null || echo "Nothing to clean"
-	@$(RM) $(TARGET)$(EXE_EXT) 2>/dev/null || echo "Nothing to clean"
-endif
-	@echo Clean completed
+	@echo "Cleaning build files..."
+	@rm -rf build 2>/dev/null || echo "Nothing to clean"
+	@rm -f $(TARGET)$(EXE_EXT) 2>/dev/null || echo "Nothing to clean"
+	@echo "Clean completed"
 
 clean-sim:
-	@echo Cleaning simulation builds...
-ifeq ($(OS),Windows_NT)
-	@for /d %%i in (build\*) do if exist "%%i\simulation" rmdir /s /q "%%i\simulation" 2>nul
-else
-	@$(RMDIR) build/*/simulation 2>/dev/null || echo "Nothing to clean"
-endif
+	@echo "Cleaning simulation builds..."
+	@rm -rf build/*/simulation 2>/dev/null || echo "Nothing to clean"
 
 clean-mcu:
-	@echo Cleaning MCU builds...
-ifeq ($(OS),Windows_NT)
-	@for /d %%i in (build\*) do if exist "%%i\mcu" rmdir /s /q "%%i\mcu" 2>nul
-else
-	@$(RMDIR) build/*/mcu 2>/dev/null || echo "Nothing to clean"
-endif
+	@echo "Cleaning MCU builds..."
+	@rm -rf build/*/mcu 2>/dev/null || echo "Nothing to clean"
 
 rebuild: clean all
 
@@ -218,16 +175,11 @@ info:
 	@echo "  Compiler:  $(CC)"
 	@echo "  Target:    $(TARGET_EXE)"
 	@echo "  Sources:   $(words $(ALL_SRCS)) files"
-	@echo "  Platform:  $(if $(OS),$(OS),Unix-like)"
 
 status: info
-	@echo.
-	@echo Available Executables:
-ifeq ($(OS),Windows_NT)
-	@if exist build (for /r build %%i in ($(TARGET)*) do echo   %%i) else echo   None found
-else
+	@echo ""
+	@echo "Available Executables:"
 	@find build -name "$(TARGET)*" -type f 2>/dev/null | sort || echo "  None found"
-endif
 
 # Help
 help:
@@ -275,11 +227,11 @@ check-deps:
 	@echo "Checking build dependencies..."
 ifeq ($(MODE),simulation)
 	@$(CC) --version >/dev/null 2>&1 || (echo "Error: GCC not found"; exit 1)
-	@echo "✓ GCC compiler available"
+	@echo "GCC compiler available"
 else
 	@$(CC) --version >/dev/null 2>&1 || (echo "Error: ARM GCC not found"; exit 1)
 	@$(OBJCOPY) --version >/dev/null 2>&1 || (echo "Error: objcopy not found"; exit 1)
-	@echo "✓ ARM toolchain available"
+	@echo "ARM toolchain available"
 endif
 	@echo "Dependencies OK"
 
@@ -290,8 +242,6 @@ dev: sim-debug
 
 prod: sim-release mcu-release
 	@echo "Production builds completed"
-	@echo "Simulation: $(shell find build -name "*simulation*$(TARGET)$(EXE_EXT)" | head -1)"
-	@echo "MCU:        $(shell find build -name "*mcu*$(TARGET).elf" | head -1)"
 
 # Phony targets
 .PHONY: all run flash clean rebuild install test help info status
