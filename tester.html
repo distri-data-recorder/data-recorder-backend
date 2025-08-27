@@ -1,281 +1,740 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>data-processor 测试页</title>
-<style>
-  :root{--bg:#0b1020;--card:#151b2e;--muted:#8aa0c5;--text:#e6eefc;--ok:#27c93f;--warn:#ffbd2e;--err:#ff5f56;--accent:#5aa6ff}
-  html,body{height:100%}
-  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Arial}
-  h2{margin:0 0 8px}
-  .wrap{display:grid;grid-template-columns:380px 1fr;gap:12px;padding:12px}
-  .card{background:var(--card);border:1px solid #223055;border-radius:14px;padding:12px}
-  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  input,button,textarea,select{background:#0f1630;border:1px solid #27365d;border-radius:10px;color:var(--text);padding:8px 10px;font:inherit;outline:none}
-  textarea{width:100%;min-height:90px}
-  input:focus,textarea:focus,select:focus{border-color:var(--accent)}
-  button{cursor:pointer}
-  .pill{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #2b3b6b;color:#9fb5e5;font-size:12px}
-  .mono{font-family:ui-monospace,Consolas,Menlo,monospace}
-  #log{height:190px;overflow:auto;background:#0b1228;border:1px solid #1e2a4a;border-radius:10px;padding:8px;font:12px/1.4 ui-monospace,Consolas,Menlo,monospace;white-space:pre-wrap}
-  #chart{width:100%;height:280px;background:#0b1228;border:1px solid #1e2a4a;border-radius:10px}
-  table{width:100%;border-collapse:collapse}
-  th,td{padding:6px;border-bottom:1px solid #213154;font-size:13px}
-  a{color:#a8c7ff}
-  .hint{color:#9ab0d8}
-  .btns button{margin-right:6px;margin-bottom:6px}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Processor - Trigger Mode Test with Waveform</title>
+    <!-- 引入 Chart.js 和相关插件 -->
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.1/moment.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.4/dist/Chart.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-streaming@1.9.0/dist/chartjs-plugin-streaming.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --bg-primary: #f8fafc;
+            --bg-card: #ffffff;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --border: #e2e8f0;
+            --border-hover: #cbd5e1;
+            --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        h1 {
+            font-size: 2.25rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.125rem;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 2rem;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+        }
+
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+        }
+
+        .status-indicator.connected {
+            background: var(--success);
+        }
+
+        .status-indicator.disconnected {
+            background: var(--danger);
+        }
+
+        .button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            border: none;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            min-width: 120px;
+        }
+
+        .button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .button-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .button-primary:hover:not(:disabled) {
+            background: var(--primary-hover);
+        }
+
+        .button-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .button-warning {
+            background: var(--warning);
+            color: white;
+        }
+
+        .button-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .button-outline {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+        }
+
+        .button-outline:hover:not(:disabled) {
+            background: var(--bg-primary);
+            border-color: var(--border-hover);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+
+        .info-item {
+            text-align: center;
+        }
+
+        .info-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--primary);
+        }
+
+        .info-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        .log-container {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            background: #1a1a1a;
+            color: #e5e5e5;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.875rem;
+        }
+
+        .log-entry {
+            margin-bottom: 0.5rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .log-info { background: rgba(59, 130, 246, 0.1); }
+        .log-success { background: rgba(16, 185, 129, 0.1); }
+        .log-warning { background: rgba(245, 158, 11, 0.1); }
+        .log-error { background: rgba(239, 68, 68, 0.1); }
+
+        .config-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .config-title {
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        input, select {
+            padding: 0.5rem 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 0.875rem;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .websocket-data {
+            background: #f1f5f9;
+            padding: 1rem;
+            border-radius: 8px;
+            border-left: 4px solid var(--primary);
+            margin-top: 1rem;
+        }
+
+        .data-type-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            margin-left: 0.5rem;
+        }
+
+        .badge-continuous {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+        }
+
+        .badge-trigger {
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--warning);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .loading {
+            animation: pulse 2s infinite;
+        }
+    </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="card">
-    <h2>连接</h2>
-    <div class="row" style="margin-bottom:6px">
-      <label>HTTP
-        <input id="httpBase" value="http://127.0.0.1:8080" style="min-width:240px">
-      </label>
+    <div class="container">
+        <header>
+            <h1>Data Processor Test Interface</h1>
+            <p class="subtitle">Trigger Mode Testing & Monitoring</p>
+        </header>
+
+        <div class="grid">
+            <!-- System Status -->
+            <div class="card">
+                <h2 class="card-title">
+                    <span class="status-indicator" id="connectionStatus"></span>
+                    System Status
+                </h2>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-value" id="packetsProcessed">-</div>
+                        <div class="info-label">Packets</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-value" id="wsClients">-</div>
+                        <div class="info-label">WS Clients</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-value" id="currentMode">-</div>
+                        <div class="info-label">Mode</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-value" id="uptime">-</div>
+                        <div class="info-label">Uptime</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Device Control -->
+            <div class="card">
+                <h2 class="card-title">Device Control</h2>
+                <div class="button-group">
+                    <button class="button button-primary" onclick="ping()">Ping</button>
+                    <button class="button button-outline" onclick="getDeviceInfo()">Device Info</button>
+                </div>
+                <div class="button-group" style="margin-top: 1rem;">
+                    <button class="button button-success" onclick="setMode('continuous')">Continuous</button>
+                    <button class="button button-warning" onclick="setMode('trigger')">Trigger Mode</button>
+                </div>
+            </div>
+
+            <!-- Stream Control -->
+            <div class="card">
+                <h2 class="card-title">Stream Control</h2>
+                <div class="config-section">
+                    <div class="config-title">Channel Configuration</div>
+                    <div class="input-group">
+                        <input type="number" id="channelId" placeholder="Channel" value="0" min="0" max="3">
+                        <input type="number" id="sampleRate" placeholder="Sample Rate" value="10000" min="1" max="100000">
+                        <select id="format">
+                            <option value="1">int16</option>
+                            <option value="2">int32</option>
+                            <option value="4">float32</option>
+                        </select>
+                        <button class="button button-outline" onclick="addChannel()">Add</button>
+                    </div>
+                    <div id="channelList"></div>
+                </div>
+                <div class="button-group">
+                    <button class="button button-primary" onclick="configureStream()">Configure</button>
+                    <button class="button button-success" onclick="startStream()">Start</button>
+                    <button class="button button-danger" onclick="stopStream()">Stop</button>
+                </div>
+            </div>
+
+            <!-- Trigger Control -->
+            <div class="card">
+                <h2 class="card-title">Trigger Control</h2>
+                <p style="margin-bottom: 1rem; color: var(--text-secondary);">
+                    In trigger mode, events occur automatically every 10-15 seconds.
+                </p>
+                <div class="button-group">
+                    <button class="button button-warning" onclick="requestTriggerData()" id="triggerBtn">Request Data</button>
+                </div>
+                <div id="triggerInfo" style="margin-top: 1rem;"></div>
+            </div>
+            
+            <!-- 实时波形图 -->
+            <div class="card" style="grid-column: 1 / -1;">
+                <h2 class="card-title">Real-time Waveform</h2>
+                <canvas id="waveformChart"></canvas>
+            </div>
+
+            <!-- WebSocket Data -->
+            <div class="card" style="grid-column: 1 / -1;">
+                <h2 class="card-title">
+                    <span class="status-indicator" id="wsStatus"></span>
+                    Real-time Data Stream
+                </h2>
+                <div class="websocket-data" id="wsData">
+                    <p>Connecting to WebSocket...</p>
+                </div>
+            </div>
+
+            <!-- Activity Log -->
+            <div class="card" style="grid-column: 1 / -1;">
+                <h2 class="card-title">Activity Log</h2>
+                <div class="log-container" id="logContainer"></div>
+            </div>
+        </div>
     </div>
-    <div class="row" style="margin-bottom:6px">
-      <label>WebSocket
-        <input id="wsUrl" value="ws://127.0.0.1:8081" style="min-width:240px">
-      </label>
-      <button id="btnConn">连接</button>
-      <button id="btnClose">断开</button>
-    </div>
-    <div class="row">
-      <span class="pill">WS 状态：<b id="wsState">DISCONNECTED</b></span>
-      <span class="pill">消息速率：<b id="rate">0</b> msg/s</span>
-      <span class="pill">字节速率：<b id="brate">0</b> B/s</span>
-      <span class="pill">累计：<b id="count">0</b></span>
-      <span class="pill">最近序号：<b id="seq">-</b></span>
-    </div>
-  </div>
 
-  <div class="card" style="grid-column: span 2">
-    <h2>实时波形（自动寻找数值数组）</h2>
-    <canvas id="chart"></canvas>
-    <div class="hint mono" id="seriesHint">等待数据…</div>
-  </div>
+    <script>
+        const API_BASE = 'http://127.0.0.1:8080';
+        const WS_URL = 'ws://127.0.0.1:8081';
+        
+        let ws = null;
+        let channels = [];
+        let lastTriggerTime = null;
+        let waveformChart = null; // 图表实例
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            connectWebSocket();
+            initChart(); // 初始化图表
+            updateStatus();
+            setInterval(updateStatus, 2000);
+        });
 
-  <div class="card">
-    <h2>控制接口</h2>
-    <div class="btns">
-      <button data-cmd="ping">PING</button>
-      <button data-cmd="info">DEVICE_INFO</button>
-      <button data-cmd="cont">连续模式</button>
-      <button data-cmd="trig">触发模式</button>
-      <button data-cmd="start">开始采集</button>
-      <button data-cmd="stop">停止采集</button>
-      <button id="btnStatus">读取状态</button>
-    </div>
-    <div style="margin-top:8px">
-      <div class="hint" style="margin-bottom:4px">配置示例（POST /api/control/configure）</div>
-      <textarea id="cfgJson">{
-  "channels": [
-    { "channel_id": 0, "sample_rate": 48000, "format": 1 }
-  ]
-}</textarea>
-      <button id="btnCfg">下发配置</button>
-    </div>
-  </div>
+        // WebSocket Connection
+        function connectWebSocket() {
+            try {
+                ws = new WebSocket(WS_URL);
+                
+                ws.onopen = function() {
+                    log('WebSocket connected', 'success');
+                    document.getElementById('wsStatus').className = 'status-indicator connected';
+                };
+                
+                ws.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    handleWebSocketMessage(data);
+                };
+                
+                ws.onclose = function() {
+                    log('WebSocket disconnected', 'warning');
+                    document.getElementById('wsStatus').className = 'status-indicator disconnected';
+                    setTimeout(connectWebSocket, 3000);
+                };
+                
+                ws.onerror = function(error) {
+                    log('WebSocket error: ' + error, 'error');
+                };
+            } catch (error) {
+                log('Failed to connect WebSocket: ' + error, 'error');
+                setTimeout(connectWebSocket, 5000);
+            }
+        }
 
-  <div class="card">
-    <h2>文件接口</h2>
-    <div class="row" style="margin-bottom:8px">
-      <input id="listDir" placeholder="可选：子目录，如 logs 或 data" style="min-width:220px">
-      <button id="btnList">列出文件</button>
-    </div>
-    <div id="files"></div>
-    <hr style="border:0;border-top:1px solid #223055;margin:12px 0">
-    <div class="hint" style="margin-bottom:4px">保存当前波形（CSV → Base64 → /api/files/save）</div>
-    <div class="row" style="margin-bottom:6px">
-      <input id="saveDir" placeholder="可选保存目录，例如 data">
-      <input id="saveName" placeholder="可选文件名，例如 test.csv">
-      <button id="btnSave">保存当前波形</button>
-    </div>
-    <div class="hint mono" id="saveResult"></div>
-  </div>
+        function handleWebSocketMessage(data) {
+            switch (data.type) {
+                case 'welcome':
+                    log(`Connected as client: ${data.client_id}`, 'info');
+                    break;
+                    
+                case 'data':
+                    updateDataDisplay(data);
+                    updateChart(data); // 使用新数据更新图表
+                    break;
+                    
+                case 'trigger_event':
+                    handleTriggerEvent(data);
+                    break;
+                    
+                default:
+                    console.log('Unknown WebSocket message:', data);
+            }
+        }
 
-  <div class="card" style="grid-column: span 2">
-    <h2>最新一帧（JSON 预览）</h2>
-    <div id="log"></div>
-  </div>
-</div>
+        function updateDataDisplay(data) {
+            const wsData = document.getElementById('wsData');
+            const dataType = data.data_type?.source || 'unknown';
+            const badge = dataType === 'Trigger' ? 'badge-trigger' : 'badge-continuous';
+            
+            wsData.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <span>Data Packet #${data.sequence}</span>
+                    <span class="data-type-badge ${badge}">${dataType.toUpperCase()}</span>
+                </div>
+                <div style="font-size: 0.875rem; color: var(--text-secondary);">
+                    Channels: ${data.channel_count} | 
+                    Samples: ${data.data?.length / data.channel_count || 0} per ch | 
+                    Sample Rate: ${data.sample_rate.toFixed(0)} Hz | 
+                    Quality: ${data.metadata?.data_quality?.status || 'Unknown'}
+                </div>
+            `;
 
-<script>
-const $ = s => document.querySelector(s);
-let ws=null, total=0, bytes=0, lastCount=0,lastBytes=0;
-let seriesBuffer=null, seriesName=null, lastObj=null;
+            if (dataType === 'Trigger' && data.data_type.trigger_info) {
+                const triggerInfo = data.data_type.trigger_info;
+                document.getElementById('triggerInfo').innerHTML = `
+                    <div style="padding: 0.75rem; background: rgba(245, 158, 11, 0.1); border-radius: 6px;">
+                        <strong>Active Trigger:</strong><br>
+                        Timestamp: ${triggerInfo.trigger_timestamp}<br>
+                        Sequence: ${triggerInfo.sequence_in_burst || 0}<br>
+                        Complete: ${triggerInfo.is_complete ? 'Yes' : 'No'}
+                    </div>
+                `;
+            }
+        }
 
-const chart = $('#chart');
-const ctx = chart.getContext('2d');
-let pending=false;
-function resize(){ const dpr=window.devicePixelRatio||1; const w=chart.clientWidth, h=chart.clientHeight; chart.width=w*dpr; chart.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); draw(); }
-window.addEventListener('resize', resize); resize();
+        function handleTriggerEvent(data) {
+            lastTriggerTime = Date.now();
+            log(`Trigger Event: Channel ${data.channel}, Pre: ${data.pre_samples}, Post: ${data.post_samples}`, 'warning');
+            
+            document.getElementById('triggerInfo').innerHTML = `
+                <div style="padding: 0.75rem; background: rgba(245, 158, 11, 0.1); border-radius: 6px;">
+                    <strong>Trigger Detected!</strong><br>
+                    Channel: ${data.channel}<br>
+                    Pre-samples: ${data.pre_samples}<br>
+                    Post-samples: ${data.post_samples}<br>
+                    Time: ${new Date(data.event_time).toLocaleTimeString()}
+                </div>
+            `;
+        }
+        
+        // Chart Functions
+        function initChart() {
+            const ctx = document.getElementById('waveformChart').getContext('2d');
+            const channelColors = ['#2563eb', '#10b981', '#f59e0b', '#ef4444'];
+            
+            const datasets = channels.map((ch, index) => ({
+                label: `Channel ${ch.channel_id}`,
+                borderColor: channelColors[index % channelColors.length],
+                borderWidth: 1,
+                pointRadius: 0,
+                fill: false,
+                data: []
+            }));
 
-function setState(s){ $('#wsState').textContent=s; }
-function logPreview(objStr){
-  const box = $('#log'); const max = 6000;
-  box.textContent = objStr.length>max ? (objStr.slice(0,max)+'\n…(truncated)') : objStr;
-}
-function findNumericArray(x, path=""){
-  if(Array.isArray(x) && x.length>=16 && x.every(v => typeof v === 'number' && Number.isFinite(v))){ return {arr:x, name:path||'data'}; }
-  if (x && typeof x === 'object'){
-    const keys = Object.keys(x);
-    // 常见字段优先
-    for (const k of ['data','samples','y','values']) {
-      if (k in x) {
-        const v = x[k];
-        const r = findNumericArray(v, path? (path+"."+k) : k);
-        if (r) return r;
-      }
-    }
-    for (const k of keys){
-      const r = findNumericArray(x[k], path? (path+"."+k) : k);
-      if(r) return r;
-    }
-  }
-  return null;
-}
-function pickSequence(obj){
-  for (const key of ['sequence','seq','frame_id','frame','index']) { if (obj && Object.prototype.hasOwnProperty.call(obj,key)) return obj[key]; }
-  return '-';
-}
+            waveformChart = new Chart(ctx, {
+                type: 'line',
+                data: { datasets },
+                options: {
+                    scales: {
+                        xAxes: [{
+                            type: 'realtime',
+                            realtime: {
+                                duration: 20000, // 20秒窗口
+                                refresh: 100,     // 100ms刷新
+                                delay: 1000,      // 延迟1秒显示
+                            }
+                        }],
+                        yAxes: [{
+                            ticks: {
+                                beginAtZero: false
+                            }
+                        }]
+                    },
+                    tooltips: { enabled: false },
+                    hover: { mode: null },
+                    animation: { duration: 0 }
+                }
+            });
+        }
+        
+        /**
+         * 更新图表函数，包含降采样逻辑以优化性能
+         * @param {object} data - 从 WebSocket 接收的数据包
+         */
+        function updateChart(data) {
+            if (!waveformChart || !data.data || data.channel_count === 0) {
+                return;
+            }
+            
+            if (waveformChart.data.datasets.length !== data.channel_count) {
+                 log('Channel count mismatch, re-initializing chart.', 'warning');
+                 return;
+            }
+
+            const now = Date.now();
+            const samplesPerChannel = data.data.length / data.channel_count;
+            const timeStep = 1000 / data.sample_rate; // 采样间隔 (ms)
+            
+            // 定义降采样阈值，每个数据包中每个通道的点数超过这个值就启用降采样
+            const DOWNSAMPLE_THRESHOLD = 2000; 
+            // 降采样后的目标点数（一对最大/最小值算两个点）
+            const TARGET_POINTS = 1000; 
+
+            if (samplesPerChannel <= DOWNSAMPLE_THRESHOLD) {
+                // --- 数据量不大，直接全部绘制 ---
+                for (let i = 0; i < samplesPerChannel; i++) {
+                    for (let ch = 0; ch < data.channel_count; ch++) {
+                        const dataIndex = i * data.channel_count + ch;
+                        const point = {
+                            x: now - (samplesPerChannel - i - 1) * timeStep,
+                            y: data.data[dataIndex]
+                        };
+                        waveformChart.data.datasets[ch].data.push(point);
+                    }
+                }
+            } else {
+                // --- 数据量过大，执行最大/最小值降采样 ---
+                log(`High data rate detected. Downsampling ${samplesPerChannel} points to ~${TARGET_POINTS * 2} points.`, 'info');
+                const bucketSize = Math.ceil(samplesPerChannel / TARGET_POINTS);
+                
+                for (let ch = 0; ch < data.channel_count; ch++) {
+                    const points = [];
+                    for (let i = 0; i < TARGET_POINTS; i++) {
+                        const bucketStart = i * bucketSize;
+                        const bucketEnd = Math.min((i + 1) * bucketSize, samplesPerChannel);
+                        if (bucketStart >= samplesPerChannel) break;
+
+                        let minVal = Infinity;
+                        let maxVal = -Infinity;
+                        let minIndex = bucketStart;
+                        let maxIndex = bucketStart;
+
+                        for (let j = bucketStart; j < bucketEnd; j++) {
+                            const val = data.data[j * data.channel_count + ch];
+                            if (val < minVal) {
+                                minVal = val;
+                                minIndex = j;
+                            }
+                            if (val > maxVal) {
+                                maxVal = val;
+                                maxIndex = j;
+                            }
+                        }
+                        
+                        // 添加最大值和最小值点，确保峰值不丢失
+                        // 注意：为了保证绘图顺序正确，需要比较minIndex和maxIndex
+                        if (minIndex <= maxIndex) {
+                            points.push({ x: now - (samplesPerChannel - minIndex - 1) * timeStep, y: minVal });
+                            points.push({ x: now - (samplesPerChannel - maxIndex - 1) * timeStep, y: maxVal });
+                        } else {
+                            points.push({ x: now - (samplesPerChannel - maxIndex - 1) * timeStep, y: maxVal });
+                            points.push({ x: now - (samplesPerChannel - minIndex - 1) * timeStep, y: minVal });
+                        }
+                    }
+                    // 一次性推送一个通道的所有降采样点
+                    Array.prototype.push.apply(waveformChart.data.datasets[ch].data, points);
+                }
+            }
+        }
 
 
-function draw(){
-  pending=false;
-  const w=chart.clientWidth, h=chart.clientHeight;
-  ctx.clearRect(0,0,w,h);
-  if(!seriesBuffer || seriesBuffer.length<2){ return; }
-  const data = seriesBuffer;
-  const N = Math.min(4096, data.length);
-  const step = data.length / N;
-  const sampled = new Array(N);
-  for(let i=0;i<N;i++) sampled[i] = data[Math.floor(i*step)];
-  let min=Infinity,max=-Infinity; for(const v of sampled){ if(v<min) min=v; if(v>max) max=v; }
-  if(min===max){ min-=1; max+=1; }
+        // API Functions
+        async function apiCall(endpoint, method = 'GET', body = null) {
+            try {
+                const options = {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                };
+                if (body) options.body = JSON.stringify(body);
+                
+                const response = await fetch(API_BASE + endpoint, options);
+                const data = await response.json();
+                
+                if (data.success) {
+                    log(`${method} ${endpoint}: ${data.data || 'Success'}`, 'success');
+                } else {
+                    log(`${method} ${endpoint}: ${data.error || 'Failed'}`, 'error');
+                }
+                return data;
+            } catch (error) {
+                log(`${method} ${endpoint}: ${error.message}`, 'error');
+                return { success: false, error: error.message };
+            }
+        }
 
-  // 轴
-  ctx.strokeStyle="#2a3a6a"; ctx.lineWidth=1;
-  ctx.beginPath(); ctx.moveTo(40,h-30); ctx.lineTo(w-10,h-30); ctx.moveTo(40,10); ctx.lineTo(40,h-30); ctx.stroke();
+        async function updateStatus() {
+            const status = await apiCall('/api/control/status');
+            if (status.success && status.data) {
+                const s = status.data;
+                document.getElementById('packetsProcessed').textContent = s.packets_processed || '-';
+                document.getElementById('wsClients').textContent = s.connected_clients || '-';
+                document.getElementById('currentMode').textContent = s.current_mode || 'Unknown';
+                document.getElementById('uptime').textContent = formatUptime(s.uptime_seconds || 0);
+                
+                const indicator = document.getElementById('connectionStatus');
+                indicator.className = `status-indicator ${s.device_connected ? 'connected' : 'disconnected'}`;
+            }
+        }
 
-  // 折线
-  const plotW = w-50, plotH = h-40, ox=40, oy=h-30;
-  ctx.strokeStyle="#5aa6ff"; ctx.lineWidth=1.2;
-  ctx.beginPath();
-  for(let i=0;i<N;i++){
-    const x = ox + (i/(N-1))*plotW;
-    const y = oy - ((sampled[i]-min)/(max-min))*plotH;
-    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-  }
-  ctx.stroke();
+        async function ping() { await apiCall('/api/control/ping', 'POST'); }
+        async function getDeviceInfo() { await apiCall('/api/control/device_info', 'POST'); }
+        async function setMode(mode) {
+            const endpoint = mode === 'continuous' ? '/api/control/continuous_mode' : '/api/control/trigger_mode';
+            await apiCall(endpoint, 'POST');
+            setTimeout(updateStatus, 500);
+        }
 
-  ctx.fillStyle="#9fb5e5"; ctx.font="12px ui-monospace,Consolas,Menlo,monospace";
-  ctx.fillText(`${seriesName||'data'}  n=${data.length}  shown=${N}`, 46, 18);
-  ctx.fillText(`min=${min.toFixed(3)}  max=${max.toFixed(3)}`, 46, 34);
-}
-function schedule(){ if(!pending){ pending=true; requestAnimationFrame(draw); } }
+        function addChannel() {
+            const channelId = parseInt(document.getElementById('channelId').value);
+            const sampleRate = parseInt(document.getElementById('sampleRate').value);
+            const format = parseInt(document.getElementById('format').value);
+            
+            if (!channels.some(ch => ch.channel_id === channelId)) {
+                channels.push({ channel_id: channelId, sample_rate: sampleRate, format });
+                updateChannelList();
+            } else {
+                log(`Channel ${channelId} already exists.`, 'warning');
+            }
+        }
 
-function connect(){
-  if(ws && ws.readyState===1) return;
-  ws = new WebSocket($('#wsUrl').value.trim());
-  setState('CONNECTING');
-  ws.onopen = ()=> setState('CONNECTED');
-  ws.onclose = ()=> setState('DISCONNECTED');
-  ws.onerror = ()=> setState('ERROR');
-  ws.onmessage = e=>{
-    total++; $('#count').textContent=String(total);
-    bytes += (typeof e.data === 'string') ? e.data.length : 0;
-    try{
-      const obj = JSON.parse(e.data);
-      lastObj = obj;
-      const seq = pickSequence(obj); $('#seq').textContent = String(seq);
-      logPreview(JSON.stringify(obj, null, 2));
-      const found = findNumericArray(obj);
-      if(found){ seriesBuffer = found.arr; seriesName = found.name; $('#seriesHint').textContent=`绘制字段：${seriesName}（长度 ${seriesBuffer.length}）`; schedule(); }
-      else { $('#seriesHint').textContent = `未在消息中找到数值数组可绘图（仅展示 JSON）`; }
-    }catch{ logPreview(String(e.data)); }
-  };
-}
-$('#btnConn').onclick = connect;
-$('#btnClose').onclick = ()=>{ if(ws){ ws.close(); ws=null; } };
-setInterval(()=>{ const c=total,b=bytes; $('#rate').textContent=String(c-lastCount); $('#brate').textContent=String(b-lastBytes); lastCount=c; lastBytes=b; }, 1000);
+        function updateChannelList() {
+            const list = document.getElementById('channelList');
+            list.innerHTML = channels.map((ch, idx) => `
+                <div style="padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; margin-bottom: 0.25rem; font-size: 0.875rem;">
+                    Ch${ch.channel_id}: ${ch.sample_rate}Hz, Format${ch.format}
+                    <button onclick="removeChannel(${idx})" style="float: right; background: none; border: none; color: var(--danger); cursor: pointer;">×</button>
+                </div>
+            `).join('');
+        }
 
-// 控制接口
-async function postJson(path, body){
-  const base = $('#httpBase').value.trim().replace(/\/$/,'');
-  const res = await fetch(base+path, {method:'POST', headers:{'Content-Type':'application/json'}, body: body? JSON.stringify(body): undefined});
-  const j = await res.json().catch(()=>({}));
-  appendLog(`[HTTP ${res.status}] ${path}\n`+JSON.stringify(j,null,2));
-  return j;
-}
-function appendLog(t){
-  const box = $('#log'); box.textContent = (t+'\n\n'+box.textContent).slice(0,24000);
-}
-document.querySelectorAll('.btns button[data-cmd]').forEach(btn=>{
-  btn.onclick = ()=>{
-    const c = btn.dataset.cmd;
-    if(c==='ping') return postJson('/api/control/ping');
-    if(c==='info') return postJson('/api/control/device_info');
-    if(c==='cont') return postJson('/api/control/continuous_mode');
-    if(c==='trig') return postJson('/api/control/trigger_mode');
-    if(c==='start') return postJson('/api/control/start');
-    if(c==='stop') return postJson('/api/control/stop');
-  };
-});
-$('#btnCfg').onclick = ()=>{
-  let obj=null; try{ obj = JSON.parse($('#cfgJson').value); }catch(e){ return alert('配置 JSON 解析失败: '+e); }
-  postJson('/api/control/configure', obj);
-};
-$('#btnStatus').onclick = async ()=>{
-  const base = $('#httpBase').value.trim().replace(/\/$/,'');
-  const r = await fetch(base+'/api/control/status');
-  const j = await r.json().catch(()=>({}));
-  appendLog(`[HTTP ${r.status}] /api/control/status\n`+JSON.stringify(j,null,2));
-};
+        function removeChannel(idx) {
+            channels.splice(idx, 1);
+            updateChannelList();
+        }
 
-// 文件接口
-$('#btnList').onclick = async ()=>{
-  const base = $('#httpBase').value.trim().replace(/\/$/,'');
-  const dir = $('#listDir').value.trim();
-  const url = base + '/api/files' + (dir? ('?dir='+encodeURIComponent(dir)) : '');
-  const res = await fetch(url);
-  const j = await res.json().catch(()=>({}));
-  renderFiles(j);
-  appendLog(`[HTTP ${res.status}] GET ${url}\n`+JSON.stringify(j,null,2));
-};
-function renderFiles(j){
-  const box = $('#files'); const base = $('#httpBase').value.trim().replace(/\/$/,'');
-  if(!j || !j.data || !Array.isArray(j.data)){ box.innerHTML = '<div class="hint">无数据</div>'; return; }
-  const rows = j.data.map(f=>{
-    const dl = `${base}/api/files/${encodeURIComponent(f.filename)}`;
-    const size = (f.size>=1024)? ( (f.size/1024).toFixed(1)+' KB' ) : (f.size+' B');
-    return `<tr><td class="mono">${f.filename}</td><td>${size}</td><td>${f.modified_at||''}</td><td><a href="${dl}" target="_blank">下载</a></td></tr>`;
-  }).join('');
-  box.innerHTML = `<table><thead><tr><th>文件名</th><th>大小</th><th>修改时间</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
-}
+        async function configureStream() {
+            if (channels.length === 0) {
+                log('No channels configured', 'warning');
+                return;
+            }
+            if (waveformChart) {
+                waveformChart.destroy();
+            }
+            initChart();
+            await apiCall('/api/control/configure', 'POST', { channels });
+        }
 
-$('#btnSave').onclick = async ()=>{
-  if(!seriesBuffer || seriesBuffer.length===0){ return alert('当前没有可保存的波形'); }
-  // 将数值数组保存为 CSV 文本，然后以 Base64 发送给 /api/files/save
-  const csv = 'value\n' + seriesBuffer.map(v=>String(v)).join('\n');
-  const b64 = btoa(unescape(encodeURIComponent(csv))); // UTF-8 → Base64
-  const base = $('#httpBase').value.trim().replace(/\/$/,'');
-  const body = {
-    b64_data: b64,
-    dir: ($('#saveDir').value.trim() || undefined),
-    filename: ($('#saveName').value.trim() || undefined),
-    ext: '.csv'
-  };
-  const res = await fetch(base+'/api/files/save', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
-  });
-  const j = await res.json().catch(()=>({}));
-  $('#saveResult').textContent = JSON.stringify(j, null, 2);
-  appendLog(`[HTTP ${res.status}] POST /api/files/save\n`+JSON.stringify(j,null,2));
-};
-</script>
+        async function startStream() { await apiCall('/api/control/start', 'POST'); }
+        async function stopStream() { await apiCall('/api/control/stop', 'POST'); }
+
+        async function requestTriggerData() {
+            const btn = document.getElementById('triggerBtn');
+            btn.disabled = true;
+            btn.classList.add('loading');
+            await apiCall('/api/control/request_trigger_data', 'POST');
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.classList.remove('loading');
+            }, 2000);
+        }
+
+        // Utility Functions
+        function log(message, type = 'info') {
+            const container = document.getElementById('logContainer');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.innerHTML = `<span style="opacity: 0.7;">[${timestamp}]</span> ${message}`;
+            container.appendChild(entry);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function formatUptime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            return `${hours}h ${minutes}m`;
+        }
+
+        // Add default channels on load
+        setTimeout(() => {
+            document.getElementById('channelId').value = '0';
+            addChannel();
+            document.getElementById('channelId').value = '1';
+            addChannel();
+        }, 100);
+    </script>
 </body>
 </html>
