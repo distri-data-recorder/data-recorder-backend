@@ -6,15 +6,16 @@ mod file_manager;
 mod config;
 
 use anyhow::Result;
-use tokio::sync::watch;
+use std::sync::Arc;
+use tokio::sync::{watch, Mutex};
 use tracing::{error, info, warn};
-use crate::data_processing::{DataProcessor};
+use crate::data_processing::DataProcessor;
 use device_communication::{DeviceManager, DeviceConfig, ConnectionType, DeviceEvent};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-    info!("Starting Integrated Data Processor v2.0 with Trigger Support");
+    info!("Starting Integrated Data Processor v2.0 with Enhanced Trigger Support");
 
     // 加载配置
     let cfg = config::Config::load()?;
@@ -37,7 +38,7 @@ async fn main() -> Result<()> {
     // 创建设备管理器
     let (mut device_manager, mut device_events, device_command_tx) = DeviceManager::new(device_config);
 
-    // 用于统计处理的数据包数量
+    // 统计数据包数量
     let (pkt_tx, pkt_rx) = watch::channel(0u64);
     
     // 用于广播处理后的数据到WebSocket
@@ -45,6 +46,12 @@ async fn main() -> Result<()> {
     
     // 用于WebSocket广播触发事件
     let (trigger_event_tx, trigger_event_rx) = tokio::sync::broadcast::channel(100);
+    
+    // 用于WebSocket广播触发批次完成事件
+    let (trigger_burst_complete_tx, trigger_burst_complete_rx) = tokio::sync::broadcast::channel(100);
+
+    // 创建共享的数据处理器
+    let data_processor = Arc::new(Mutex::new(DataProcessor::new()));
 
     // ======= 设备管理任务 =======
     let device_handle = tokio::spawn(async move {
@@ -64,24 +71,50 @@ async fn main() -> Result<()> {
     // ======= 设备事件处理任务 =======
     let processed_tx_clone = processed_tx.clone();
     let trigger_event_tx_clone = trigger_event_tx.clone();
+    let trigger_burst_complete_tx_clone = trigger_burst_complete_tx.clone();
     let pkt_tx_clone = pkt_tx.clone();
+    let data_processor_clone = data_processor.clone();
+    
     let event_handle = tokio::spawn(async move {
         let mut packet_count = 0u64;
-        let mut data_processor = DataProcessor::new();
+        let mut current_burst_id: Option<String> = None;
         
         while let Some(event) = device_events.recv().await {
             match event {
                 DeviceEvent::Connected(conn_type) => {
                     info!("Device connected: {}", conn_type);
-                    // 重置处理器状态
-                    data_processor.reset_trigger_state();
+                    // 重置数据处理器状态
+                    let mut processor = data_processor_clone.lock().await;
+                    processor.reset_trigger_state();
+                    current_burst_id = None;
                 }
                 DeviceEvent::Disconnected => {
                     warn!("Device disconnected");
+                    current_burst_id = None;
+                }
+                DeviceEvent::TriggerEvent(trigger_event) => {
+                    info!("Trigger event received: timestamp={}, channel={}, pre={}, post={}", 
+                          trigger_event.timestamp, trigger_event.channel, 
+                          trigger_event.pre_samples, trigger_event.post_samples);
+                    
+                    // 开始新的触发批次
+                    let burst_id = {
+                        let mut processor = data_processor_clone.lock().await;
+                        processor.start_trigger_burst(&trigger_event)
+                    };
+                    current_burst_id = Some(burst_id);
+                    
+                    // 广播触发事件到WebSocket客户端
+                    let _ = trigger_event_tx_clone.send(trigger_event);
                 }
                 DeviceEvent::DataPacket(packet) => {
-                    // 将设备数据包转换为处理后的数据
-                    match data_processor.process_packet(&packet) {
+                    // 处理数据包
+                    let processed_result = {
+                        let mut processor = data_processor_clone.lock().await;
+                        processor.process_packet(&packet)
+                    };
+
+                    match processed_result {
                         Ok(processed) => {
                             packet_count += 1;
                             let _ = pkt_tx_clone.send(packet_count);
@@ -91,6 +124,7 @@ async fn main() -> Result<()> {
                             let data_source = processed.data_type.source.clone();
                             let trigger_info = processed.data_type.trigger_info.clone();
                             
+                            // 广播处理后的数据
                             let _ = processed_tx_clone.send(processed);
                             
                             match data_source {
@@ -115,33 +149,33 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                DeviceEvent::TriggerEvent(trigger_event) => {
-                    info!("Trigger event received: timestamp={}, channel={}, pre={}, post={}", 
-                          trigger_event.timestamp, trigger_event.channel, 
-                          trigger_event.pre_samples, trigger_event.post_samples);
-                    
-                    // 广播触发事件到WebSocket客户端
-                    let _ = trigger_event_tx_clone.send(trigger_event);
-                }
                 DeviceEvent::BufferTransferComplete => {
                     info!("Trigger data transfer completed");
                     
-                    // 可以在这里触发自动文件保存
-                    let stats = data_processor.get_stats();
-                    info!("Processing stats: total_packets={}, trigger_burst_seq={}", 
-                          stats.total_packets_processed, stats.current_trigger_burst_sequence);
+                    // 完成当前触发批次
+                    let completed_burst = {
+                        let mut processor = data_processor_clone.lock().await;
+                        processor.complete_trigger_burst()
+                    };
                     
-                    // 通知WebSocket客户端传输完成
-                    let _complete_event = serde_json::json!({
-                        "type": "trigger_complete",
-                        "timestamp": chrono::Utc::now().timestamp_millis(),
-                        "total_packets": stats.total_packets_processed,
-                        "burst_sequence": stats.current_trigger_burst_sequence,
-                    });
+                    if let Some(burst) = completed_burst {
+                        let stats = {
+                            let processor = data_processor_clone.lock().await;
+                            processor.get_stats()
+                        };
+                        
+                        info!("Trigger burst completed: id={}, packets={}, samples={}", 
+                              burst.burst_id, burst.data_packets.len(), burst.total_samples);
+                        
+                        // 广播触发批次完成事件到WebSocket客户端
+                        let _ = trigger_burst_complete_tx_clone.send(burst);
+                        
+                        // 处理统计信息
+                        info!("Processing stats: total_packets={}, trigger_burst_seq={}", 
+                              stats.total_packets_processed, stats.current_trigger_burst_sequence);
+                    }
                     
-                    // 通过processed_tx发送特殊的完成消息
-                    // 这里我们创建一个特殊的ProcessedData来标识完成事件
-                    // 实际实现中可能需要更优雅的方式
+                    current_burst_id = None;
                 }
                 DeviceEvent::StatusUpdate(status) => {
                     info!("Device status: connected={}, id={:?}, fw={:?}, mode={:?}", 
@@ -168,11 +202,12 @@ async fn main() -> Result<()> {
         warn!("Device event processing loop ended");
     });
 
-    // ======= WebSocket 服务：广播处理后的数据和触发事件 =======
+    // ======= WebSocket 服务：广播处理后的数据、触发事件和批次完成事件 =======
     let mut ws_server = websocket::WebSocketServer::new(
         cfg.websocket.clone(), 
         processed_rx_for_ws,
-        trigger_event_rx
+        trigger_event_rx,
+        trigger_burst_complete_rx
     );
     let ws_clients_rx = ws_server.client_count_rx.clone();
     let ws_handle = tokio::spawn(async move {
@@ -187,6 +222,7 @@ async fn main() -> Result<()> {
         device_command_tx,
         pkt_rx.clone(),
         ws_clients_rx.clone(),
+        data_processor.clone(),
     );
     let http_handle = tokio::spawn(async move {
         if let Err(e) = web.run().await {
@@ -197,7 +233,12 @@ async fn main() -> Result<()> {
     info!("All services started successfully");
     info!("WebSocket server: ws://{}:{}", cfg.websocket.host, cfg.websocket.port);
     info!("HTTP server: http://{}:{}", cfg.web_server.host, cfg.web_server.port);
-    info!("Trigger mode support: ENABLED");
+    info!("Enhanced trigger mode support: ENABLED");
+    info!("  - Real-time trigger data preview");
+    info!("  - Custom file saving with user-defined paths");
+    info!("  - Multiple export formats (JSON, CSV, Binary)");
+    info!("  - Quality assessment and statistics");
+    info!("  - Trigger burst management and caching");
     info!("Press Ctrl+C to shutdown");
 
     // 等待任一任务退出或 Ctrl+C

@@ -496,18 +496,18 @@ impl DeviceManager {
                     let sample_count = u16::from_le_bytes([f.payload[6],f.payload[7]]);
                     let data = f.payload[8..].to_vec();
                     
-                    // 确定数据类型
+                    // 确定数据类型 - 关键修改
                     let data_type = if self.trigger_active && self.current_trigger.is_some() {
                         DataType::Trigger {
                             trigger_timestamp: self.current_trigger.as_ref().unwrap().timestamp,
-                            is_complete: false, // 将在传输完成时更新
+                            is_complete: false, // 将在 BUFFER_TRANSFER_COMPLETE 时更新
                         }
                     } else {
                         DataType::Continuous
                     };
                     
                     debug!("DATA packet: ts={}, channels=0x{:04X}, samples={}, type={:?}", 
-                           ts, enabled_channels, sample_count, data_type);
+                        ts, enabled_channels, sample_count, data_type);
                     
                     let pkt = DataPacket {
                         timestamp_ms: ts,
@@ -546,15 +546,11 @@ impl DeviceManager {
             0x4F => { // BUFFER_TRANSFER_COMPLETE
                 info!("Trigger data transfer complete");
                 
-                // 更新当前触发的完成状态
-                if let Some(ref mut _trigger) = self.current_trigger {
-                    // 这里可以进行一些清理工作
-                }
-                
+                // 发送传输完成事件
                 let _ = self.event_tx.send(DeviceEvent::BufferTransferComplete);
                 
-                // 可以选择清除当前触发状态，或者保留用于下一次触发
-                // self.current_trigger = None;
+                // 注意：这里不清除 current_trigger，因为数据处理器需要它来完成批次
+                // self.current_trigger 会在下次触发时重置
             }
             0x90 => { // ACK
                 debug!("ACK seq={}", f.sequence);

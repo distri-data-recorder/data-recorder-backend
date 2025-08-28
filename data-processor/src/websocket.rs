@@ -1,4 +1,4 @@
-use crate::data_processing::ProcessedData;
+use crate::data_processing::{ProcessedData, DataQuality, TriggerBurst};
 use crate::device_communication::TriggerEvent;
 use crate::config::WebSocketConfig;
 use anyhow::Result;
@@ -15,20 +15,22 @@ pub struct WebSocketServer {
     config: WebSocketConfig,
     clients: Arc<RwLock<HashMap<String, ClientConnection>>>,
     data_receiver: broadcast::Receiver<ProcessedData>,
-    trigger_receiver: broadcast::Receiver<TriggerEvent>,  // 新增：触发事件接收器
+    trigger_receiver: broadcast::Receiver<TriggerEvent>,
+    trigger_burst_complete_receiver: broadcast::Receiver<TriggerBurst>,
     pub client_count_rx: watch::Receiver<usize>,
     client_count_tx: watch::Sender<usize>,
 }
 
 struct ClientConnection {
     sender: mpsc::UnboundedSender<Message>,
-    subscriptions: ClientSubscriptions,  // 新增：客户端订阅管理
+    subscriptions: ClientSubscriptions,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct ClientSubscriptions {
     data_stream: bool,           // 是否订阅数据流
     trigger_events: bool,        // 是否订阅触发事件
+    trigger_bursts: bool,        // 是否订阅触发批次完成事件
     continuous_only: bool,       // 仅订阅连续数据
     trigger_only: bool,          // 仅订阅触发数据
 }
@@ -38,6 +40,7 @@ impl Default for ClientSubscriptions {
         Self {
             data_stream: true,       // 默认订阅数据流
             trigger_events: true,    // 默认订阅触发事件
+            trigger_bursts: true,    // 默认订阅触发批次完成事件
             continuous_only: false,  // 默认不限制数据类型
             trigger_only: false,
         }
@@ -49,6 +52,7 @@ impl WebSocketServer {
         config: WebSocketConfig, 
         data_receiver: broadcast::Receiver<ProcessedData>,
         trigger_receiver: broadcast::Receiver<TriggerEvent>,
+        trigger_burst_complete_receiver: broadcast::Receiver<TriggerBurst>,
     ) -> Self {
         let clients = Arc::new(RwLock::new(HashMap::new()));
         let (tx, rx) = watch::channel(0usize);
@@ -57,6 +61,7 @@ impl WebSocketServer {
             clients,
             data_receiver,
             trigger_receiver,
+            trigger_burst_complete_receiver,
             client_count_rx: rx,
             client_count_tx: tx,
         }
@@ -82,6 +87,15 @@ impl WebSocketServer {
         tokio::spawn(async move {
             while let Ok(trigger_event) = trigger_rx.recv().await {
                 Self::broadcast_trigger_event(&clients_clone2, &trigger_event).await;
+            }
+        });
+
+        // 触发批次完成事件广播 task
+        let clients_clone3 = Arc::clone(&self.clients);
+        let mut burst_complete_rx = self.trigger_burst_complete_receiver.resubscribe();
+        tokio::spawn(async move {
+            while let Ok(trigger_burst) = burst_complete_rx.recv().await {
+                Self::broadcast_trigger_burst_complete(&clients_clone3, &trigger_burst).await;
             }
         });
 
@@ -134,6 +148,7 @@ impl WebSocketServer {
             "server_capabilities": {
                 "data_streaming": true,
                 "trigger_events": true,
+                "trigger_burst_complete": true,
                 "subscription_control": true
             }
         });
@@ -219,6 +234,7 @@ impl WebSocketServer {
                                 client.subscriptions = ClientSubscriptions {
                                     data_stream: false,
                                     trigger_events: false,
+                                    trigger_bursts: false,
                                     continuous_only: false,
                                     trigger_only: false,
                                 };
@@ -228,7 +244,8 @@ impl WebSocketServer {
                                     if let Some(channel_str) = channel.as_str() {
                                         match channel_str {
                                             "data" => client.subscriptions.data_stream = true,
-                                            "triggers" => client.subscriptions.trigger_events = true,
+                                            "trigger_events" => client.subscriptions.trigger_events = true,
+                                            "trigger_bursts" => client.subscriptions.trigger_bursts = true,
                                             "continuous_only" => {
                                                 client.subscriptions.data_stream = true;
                                                 client.subscriptions.continuous_only = true;
@@ -236,6 +253,11 @@ impl WebSocketServer {
                                             "trigger_only" => {
                                                 client.subscriptions.data_stream = true;
                                                 client.subscriptions.trigger_only = true;
+                                            }
+                                            "all" => {
+                                                client.subscriptions.data_stream = true;
+                                                client.subscriptions.trigger_events = true;
+                                                client.subscriptions.trigger_bursts = true;
                                             }
                                             _ => {}
                                         }
@@ -320,7 +342,6 @@ impl WebSocketServer {
                     }
                 }
             }
-            // 保留注释：sender_task 会在发送失败时清理，这里显式 drop 掉临时变量以消告警
             drop(drop_ids);
         }
     }
@@ -357,5 +378,82 @@ impl WebSocketServer {
             "Broadcasted trigger event to clients: ts={}, ch={}", 
             trigger_event.timestamp, trigger_event.channel
         );
+    }
+
+    /// 广播触发批次完成事件
+    async fn broadcast_trigger_burst_complete(
+        clients: &Arc<RwLock<HashMap<String, ClientConnection>>>,
+        trigger_burst: &TriggerBurst,
+    ) {
+        let payload = serde_json::json!({
+            "type": "trigger_burst_complete",
+            "burst_id": trigger_burst.burst_id,
+            "trigger_timestamp": trigger_burst.trigger_timestamp,
+            "trigger_channel": trigger_burst.trigger_channel,
+            "total_samples": trigger_burst.total_samples,
+            "total_packets": trigger_burst.data_packets.len(),
+            "duration_ms": Self::calculate_burst_duration(trigger_burst),
+            "quality": match trigger_burst.quality_summary.overall_quality {
+                DataQuality::Good => "Good",
+                DataQuality::Warning(_) => "Warning", 
+                DataQuality::Error(_) => "Error",
+            },
+            "can_save": trigger_burst.is_complete && !trigger_burst.data_packets.is_empty(),
+            "created_at": trigger_burst.created_at,
+            "preview_samples": Self::extract_preview_samples(trigger_burst),
+            "channel_stats": trigger_burst.quality_summary.channel_stats,
+            "voltage_range": trigger_burst.quality_summary.voltage_range,
+            "event_time": chrono::Utc::now().timestamp_millis()
+        });
+
+        if let Ok(text) = serde_json::to_string(&payload) {
+            let g = clients.read().await;
+            let mut drop_ids: Vec<String> = Vec::new();
+            
+            for (id, client) in g.iter() {
+                // 只发送给订阅了触发批次完成事件的客户端
+                if client.subscriptions.trigger_bursts {
+                    if client.sender.send(Message::Text(text.clone())).is_err() {
+                        drop_ids.push(id.clone());
+                    }
+                }
+            }
+            drop(drop_ids);
+        }
+
+        info!(
+            "Broadcasted trigger burst complete: id={}, samples={}, packets={}", 
+            trigger_burst.burst_id,
+            trigger_burst.total_samples,
+            trigger_burst.data_packets.len()
+        );
+    }
+
+    /// 计算触发批次持续时间
+    fn calculate_burst_duration(burst: &TriggerBurst) -> f64 {
+        if burst.data_packets.len() <= 1 {
+            return 0.0;
+        }
+
+        let first_ts = burst.data_packets[0].timestamp;
+        let last_ts = burst.data_packets.last().unwrap().timestamp;
+        (last_ts - first_ts) as f64
+    }
+
+    /// 提取预览样本（前100个样本，用于前端快速预览）
+    fn extract_preview_samples(burst: &TriggerBurst) -> Vec<f64> {
+        let mut preview = Vec::new();
+        let max_preview_samples = 100;
+        
+        for packet in &burst.data_packets {
+            for &sample in &packet.data {
+                preview.push(sample);
+                if preview.len() >= max_preview_samples {
+                    return preview;
+                }
+            }
+        }
+        
+        preview
     }
 }
