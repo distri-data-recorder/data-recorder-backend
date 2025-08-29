@@ -64,7 +64,7 @@ pub struct AppState {
     packets_rx: watch::Receiver<u64>,
     clients_rx: watch::Receiver<usize>,
     collecting: Arc<Mutex<bool>>,
-    device_connected: Arc<Mutex<bool>>,
+    device_status_rx: watch::Receiver<bool>,
     current_mode: Arc<Mutex<Option<String>>>,
     file_manager: Arc<FileManager>,
     data_processor: Arc<Mutex<DataProcessor>>,
@@ -81,6 +81,7 @@ impl WebServer {
         packets_rx: watch::Receiver<u64>,
         clients_rx: watch::Receiver<usize>,
         data_processor: Arc<Mutex<DataProcessor>>,
+        device_status_rx: watch::Receiver<bool>,
     ) -> Self {
         let fm = FileManager::new(&config.storage.data_dir)
             .expect("failed to init data directory");
@@ -92,7 +93,7 @@ impl WebServer {
                 packets_rx,
                 clients_rx,
                 collecting: Arc::new(Mutex::new(false)),
-                device_connected: Arc::new(Mutex::new(false)),
+                device_status_rx,
                 current_mode: Arc::new(Mutex::new(None)),
                 file_manager: Arc::new(fm),
                 data_processor,
@@ -572,7 +573,7 @@ async fn get_status(State(st): State<AppState>) -> Result<Json<ApiResponse<Syste
     let packets = *st.packets_rx.borrow();
     let clients = *st.clients_rx.borrow();
     let collecting = *st.collecting.lock().await;
-    let device_connected = *st.device_connected.lock().await;
+    let device_connected = *st.device_status_rx.borrow();
     let current_mode = st.current_mode.lock().await.clone();
 
     // 获取触发状态

@@ -325,6 +325,10 @@ impl DeviceManager {
     }
 
     pub async fn run(&mut self) -> Result<()> {
+        let mut last_ping = tokio::time::Instant::now();
+        let mut last_data_time = tokio::time::Instant::now();
+        let ping_interval = Duration::from_secs(30); // 基础ping间隔
+
         loop {
             // 连接
             if self.connection.is_none() {
@@ -351,6 +355,24 @@ impl DeviceManager {
                             error!("handle_command: {}", e);
                         }
                     }
+                    
+                    // 智能ping：如果最近有数据活动，延长ping间隔
+                    _ = tokio::time::sleep_until(last_ping + ping_interval) => {
+                        let time_since_data = last_data_time.elapsed();
+                        
+                        // 如果最近10秒内有数据，可以跳过这次ping
+                        if time_since_data > Duration::from_secs(10) {
+                            if let Err(e) = self.send_command(0x01, &[]).await {
+                                error!("Ping failed: {}", e);
+                                // ping失败可能表示连接问题
+                            } else {
+                                debug!("Sent keep-alive ping");
+                            }
+                        } else {
+                            debug!("Skipped ping due to recent data activity");
+                        }
+                        last_ping = tokio::time::Instant::now();
+                    }
 
                     // 设备读取
                     res = async {
@@ -362,6 +384,7 @@ impl DeviceManager {
                                 if let Err(e) = self.process_bytes(&bytes).await {
                                     error!("process_bytes: {}", e);
                                 }
+                                last_data_time = tokio::time::Instant::now();
                             }
                             Err(e) => {
                                 error!("read error: {}", e);

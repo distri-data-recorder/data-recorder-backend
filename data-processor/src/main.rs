@@ -41,6 +41,9 @@ async fn main() -> Result<()> {
     // 统计数据包数量
     let (pkt_tx, pkt_rx) = watch::channel(0u64);
     
+    // 用于追踪设备连接状态
+    let (device_status_tx, device_status_rx) = watch::channel(false);
+    
     // 用于广播处理后的数据到WebSocket
     let (processed_tx, processed_rx_for_ws) = tokio::sync::broadcast::channel(1000);
     
@@ -83,6 +86,7 @@ async fn main() -> Result<()> {
             match event {
                 DeviceEvent::Connected(conn_type) => {
                     info!("Device connected: {}", conn_type);
+                    let _ = device_status_tx.send(true); // 更新连接状态
                     // 重置数据处理器状态
                     let mut processor = data_processor_clone.lock().await;
                     processor.reset_trigger_state();
@@ -90,6 +94,7 @@ async fn main() -> Result<()> {
                 }
                 DeviceEvent::Disconnected => {
                     warn!("Device disconnected");
+                    let _ = device_status_tx.send(false); // 更新断开状态
                     _current_burst_id = None;
                 }
                 DeviceEvent::TriggerEvent(trigger_event) => {
@@ -108,6 +113,9 @@ async fn main() -> Result<()> {
                     let _ = trigger_event_tx_clone.send(trigger_event);
                 }
                 DeviceEvent::DataPacket(packet) => {
+                    // 收到数据包表示设备连接正常
+                    let _ = device_status_tx.send(true); // 数据活跃时更新状态
+                    
                     // 处理数据包
                     let processed_result = {
                         let mut processor = data_processor_clone.lock().await;
@@ -178,6 +186,9 @@ async fn main() -> Result<()> {
                     _current_burst_id = None;
                 }
                 DeviceEvent::StatusUpdate(status) => {
+                    // 收到设备状态更新也表示连接正常
+                    let _ = device_status_tx.send(true); // 响应活跃时更新状态
+                    
                     info!("Device status: connected={}, id={:?}, fw={:?}, mode={:?}", 
                           status.connected, status.device_id, status.firmware_version, status.mode);
                 }
@@ -223,6 +234,7 @@ async fn main() -> Result<()> {
         pkt_rx.clone(),
         ws_clients_rx.clone(),
         data_processor.clone(),
+        device_status_rx,
     );
     let http_handle = tokio::spawn(async move {
         if let Err(e) = web.run().await {
