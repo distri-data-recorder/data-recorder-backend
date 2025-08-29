@@ -1,212 +1,191 @@
-# 数据采集系统后端
+# 通用数据采集系统 - 项目总览
 
-这是一个高性能的信号采集系统后端，包含数据采集进程和数据处理进程，通过共享内存和消息队列实现高效的进程间通信。
+一个实时数据采集和处理系统，支持从开发测试到生产部署的完整流程。
 
 ## 系统架构
 
+### 部署模式
+
+```mermaid
+graph LR
+    subgraph "真实部署"
+        A1[下位机设备<br/>MCU+传感器] -->|USB-CDC| B1[data-processor<br/>数据处理器]
+        B1 -->|WebSocket/API| C1[前端界面]
+        B1 --> D1[文件存储]
+    end
+    
+    subgraph "开发测试"  
+        A2[device-simulator<br/>设备模拟器] -->|TCP Socket| B2[data-processor<br/>数据处理器]
+        B2 -->|WebSocket/API| C2[前端界面] 
+        B2 --> D2[文件存储]
+    end
 ```
-┌─────────────────┐    USB-CDC    ┌─────────────────┐    共享内存    ┌─────────────────┐
-│                 │ ──────────────▶│                 │ ──────────────▶│                 │
-│   下位机设备     │               │  数据采集进程    │               │  数据处理进程    │
-│   (信号源)      │               │  (data-reader)  │               │ (data-processor) │
-│                 │               │                 │ ◀──────────────│                 │
-└─────────────────┘               └─────────────────┘    消息队列    └─────────────────┘
-                                                                            │
-                                                                            │ WebSocket
-                                                                            ▼
-                                                                    ┌─────────────────┐
-                                                                    │                 │
-                                                                    │     前端界面     │
-                                                                    │                 │
-                                                                    └─────────────────┘
-                                                                            ▲
-                                                                            │ HTTPS API
-                                                                            │
+
+### 数据流程
+
+```mermaid
+sequenceDiagram
+    participant Dev as 设备/模拟器
+    participant Proc as data-processor
+    participant UI as 前端界面
+    
+    Dev->>Proc: 协议V6数据帧
+    Proc->>Proc: 数据解析和处理
+    Proc->>UI: WebSocket实时流
+    Proc->>Proc: 触发批次管理
+    UI->>Proc: REST API控制
+    Proc->>Dev: 设备控制命令
 ```
 
 ## 项目结构
 
 ```
-data-recorder-backend/
-├── data-reader/                 # 数据采集进程 (C语言)
-│   ├── serialread.c            # 主程序
-│   ├── shared_memory.h/.c      # 共享内存模块
-│   ├── protocol/               # 通信协议
-│   │   ├── protocol.h/.c       # 帧解析
-│   │   └── io_buffer.h/.c      # 缓冲区管理
-│   └── Makefile               # 构建配置
-├── data-processor/             # 数据处理进程 (Rust语言)
-│   ├── src/
-│   │   ├── main.rs            # 主程序入口
-│   │   ├── config.rs          # 配置管理
-│   │   ├── ipc.rs             # 进程间通信
-│   │   ├── data_processing.rs # 数据处理核心
-│   │   ├── web_server.rs      # HTTPS API服务器
-│   │   ├── websocket.rs       # WebSocket服务器
-│   │   └── file_manager.rs    # 文件管理
-│   └── Cargo.toml             # Rust依赖配置
-├── ipc_design.md              # 进程间通信设计文档
-├── test_system.ps1            # 系统测试脚本
-├── quick_test.ps1             # 快速测试脚本
-├── TESTING_GUIDE.md           # 详细测试指南
-└── README.md                  # 项目说明文档
+data-acquisition-system/
+├── test-sender/           # 设备模拟器，C语言实现
+├── data-processor/        # 核心处理器，Rust实现  
+├── data-reader/          # 独立采集模块(保留)
+├── doc/                  # 协议文档
+└── html/                 # 测试界面
 ```
 
-## 功能特性
+## 核心功能
 
-### 数据采集进程 (data-reader)
-- **串口通信**: 通过USB-CDC接收下位机数据
-- **协议解析**: 解析帧格式，提取ADC数据包
-- **共享内存**: 高性能数据传输到处理进程
-- **文件保存**: 原始帧数据持久化存储
-- **实时监控**: 交互式命令行界面
+### 数据采集
+- **协议V6**: 二进制帧格式，CRC16校验
+- **双连接方式**: USB-CDC串口(生产) + TCP Socket(开发)
+- **触发模式**: 事件驱动的数据采集
+- **连续模式**: 实时数据流
 
-### 数据处理进程 (data-processor)
-- **数据处理**: ADC数据解析、滤波、格式转换
-- **WebSocket服务**: 实时数据推送到前端
-- **HTTPS API**: 控制命令和文件下载接口
-- **文件管理**: 波形文件保存和管理
-- **配置管理**: 灵活的系统配置
+### 触发批次管理
+- **智能缓存**: 自动管理最近10个触发事件
+- **数据预览**: WebSocket实时推送完成的批次
+- **自定义保存**: 用户选择文件名、路径、格式
+- **质量评估**: 自动分析数据完整性和信号质量
 
-## 进程间通信
-
-### 共享内存
-- **名称**: `ADC_DATA_SHARED_MEM`
-- **大小**: 约4.2MB (1024个数据包缓冲区)
-- **同步**: 原子操作保证线程安全
-- **数据格式**: 时间戳 + 序列号 + ADC载荷
-
-### 消息队列
-- **控制信号**: 开始/停止采集、状态查询
-- **文件操作**: 波形保存请求
-- **错误处理**: 异常情况通知
-
-## API接口
-
-### HTTPS API (默认端口: 8443)
-- `POST /api/control/start` - 开始数据采集
-- `POST /api/control/stop` - 停止数据采集
-- `GET /api/control/status` - 获取系统状态
-- `GET /api/files` - 列出可用文件
-- `GET /api/files/{filename}` - 下载文件
-- `POST /api/files/save` - 保存当前波形
-
-### WebSocket (默认端口: 8080)
-- 实时数据流推送
-- 客户端连接管理
-- 数据质量监控
+### Web接口
+- **REST API**: 设备控制、文件管理、批次操作
+- **WebSocket**: 实时数据流和事件通知
+- **测试界面**: 完整的功能测试网页
 
 ## 快速开始
 
-### 环境要求
-- Windows 10/11
-- GCC编译器 (MinGW)
-- Rust 1.70+ (可选，用于数据处理进程)
-- Visual Studio Build Tools (Rust编译需要)
+### 开发测试
 
-### 编译和运行
-
-1. **编译数据采集进程**:
 ```bash
-cd data-reader
-gcc -std=c11 -Wall -Wextra -Wno-unused-parameter -Iprotocol -O0 -g -c serialread.c -o serialread.o
-gcc -std=c11 -Wall -Wextra -Wno-unused-parameter -Iprotocol -O0 -g -c shared_memory.c -o shared_memory.o
-gcc serialread.o protocol/protocol.o protocol/io_buffer.o shared_memory.o -o serialread.exe -lkernel32 -luser32
-```
+# 1. 启动设备模拟器
+cd test-sender
+make run
 
-2. **编译数据处理进程** (需要Visual Studio Build Tools):
-```bash
+# 2. 启动数据处理器  
 cd data-processor
-cargo build --release
+cargo run --release
+
+# 3. 打开测试界面
+# 浏览器访问 html/trigger_test.html
 ```
 
-3. **运行快速测试**:
-```powershell
-# 快速测试（推荐）
-.\quick_test.ps1
+### 生产部署
 
-# 或运行完整系统测试
-.\test_system.ps1
-```
-
-### 使用方法
-
-1. **启动数据采集进程**:
 ```bash
-cd data-reader
-.\serialread.exe [COM端口号]
-```
+# 1. 编译MCU固件
+cd test-sender
+make MODE=mcu flash
 
-2. **启动数据处理进程**:
-```bash
-cd data-processor
+# 2. 配置串口连接
+export DEVICE_TYPE=serial
+export SERIAL_PORT=/dev/ttyUSB0
+
+# 3. 启动处理器
+cd data-processor  
 cargo run --release
 ```
 
-3. **连接前端**:
-   - WebSocket: `ws://localhost:8080`
-   - API: `https://localhost:8443`
+## 主要API
 
-## 测试指南
-
-### 快速测试
-```powershell
-# 运行快速测试脚本
-.\quick_test.ps1
-
-# 仅编译测试
-.\quick_test.ps1 -BuildOnly
-
-# 仅功能测试
-.\quick_test.ps1 -TestOnly
-
-# 详细输出
-.\quick_test.ps1 -Verbose
+### 设备控制
+```http
+POST /api/control/trigger_mode    # 设置触发模式
+POST /api/control/start           # 开始采集
+POST /api/control/stop            # 停止采集
+GET  /api/control/status          # 系统状态
 ```
 
-### 详细测试
-请参考 [TESTING_GUIDE.md](TESTING_GUIDE.md) 获取完整的测试步骤和故障排除指南。
+### 触发管理
+```http
+GET    /api/trigger/list                # 批次列表
+GET    /api/trigger/preview/{burst_id}  # 批次预览
+POST   /api/trigger/save/{burst_id}     # 保存批次
+DELETE /api/trigger/delete/{burst_id}   # 删除批次
+```
+
+### 文件操作
+```http
+GET  /api/files                  # 文件列表
+GET  /api/files/{filename}       # 下载文件
+POST /api/files/save             # 保存文件
+```
 
 ## 配置说明
 
-### 数据采集进程配置
-- 默认COM端口: COM7
-- 波特率: 115200
-- 帧缓存: 500帧批量保存
-- 文件大小: 每文件最多5万帧
+### 环境变量
+```bash
+# 连接配置
+DEVICE_TYPE=socket                # serial/socket
+SOCKET_ADDRESS=127.0.0.1:9001    # Socket地址
+SERIAL_PORT=COM7                  # 串口
 
-### 数据处理进程配置
-- 共享内存名称: `ADC_DATA_SHARED_MEM`
-- WebSocket端口: 8080
-- HTTPS端口: 8443
-- 处理间隔: 10ms
+# 服务配置
+WEB_PORT=8080                     # HTTP端口
+WS_PORT=8081                      # WebSocket端口
 
-## 开发状态
+# 存储配置  
+DATA_DIR=./data                   # 数据目录
+TRIGGER_CACHE_SIZE=10             # 批次缓存数量
+```
 
-✅ **已完成**:
-- 进程间通信架构设计
-- 数据采集进程 (C语言实现)
-- 数据处理进程框架 (Rust语言)
-- 共享内存通信模块
-- WebSocket和HTTPS服务器
-- 文件管理功能
-- 系统集成测试
+### 构建选项
+```bash
+# 设备模拟器
+make BUILD=release MODE=simulation  # PC版本
+make BUILD=release MODE=mcu        # MCU版本
 
-🔄 **待完成**:
-- Visual Studio Build Tools安装
-- Rust项目完整编译测试
-- 端到端数据流测试
-- 前端界面集成
-- 性能优化和调试
+# 数据处理器
+cargo build --release              # 优化版本
+```
+
+## 典型使用场景
+
+### 振动监测
+设备持续监测振动信号，检测到异常时自动触发数据采集，采集前后各100ms的振动数据，用户可预览数据质量后选择保存。
+
+### 冲击测试  
+产品跌落测试中，冲击传感器检测到冲击事件时触发采集，自动保存冲击前后的完整加速度数据，支持导出为CSV格式供分析软件使用。
+
+### 信号分析
+实时监控多通道信号质量，触发事件发生时采集所有通道数据，自动评估信号完整性，标记异常数据供进一步分析。
 
 ## 技术栈
 
-- **数据采集**: C语言 + Windows API
-- **数据处理**: Rust + Tokio异步运行时
-- **Web服务**: Axum框架 + WebSocket
-- **进程通信**: 共享内存 + 消息队列
-- **数据格式**: JSON + 二进制协议
+- **设备层**: C语言 + 协议V6 + CRC校验
+- **处理层**: Rust + Tokio异步 + Serde序列化  
+- **Web层**: Axum框架 + WebSocket + REST API
+- **前端**: HTML5 + JavaScript + Chart.js
 
-## 许可证
+## 部署注意事项
 
-本项目为内部开发项目，版权所有。
+### 硬件要求
+- **开发**: 支持Rust编译的系统，4GB RAM
+- **MCU部署**: STM32F4或类似MCU，USB-CDC支持
+- **传输**: USB2.0或更高，稳定的电源供应
+
+### 性能指标
+- **采样率**: 最高100kHz/通道(MCU模式)
+- **延迟**: 端到端<50ms
+- **吞吐量**: 1MB/s(仿真模式)
+- **并发**: 支持多WebSocket客户端
+
+### 故障排除
+- **设备连接**: 检查串口权限和波特率设置
+- **内存不足**: 调整TRIGGER_CACHE_SIZE减少缓存
+- **数据丢失**: 验证CRC校验和帧完整性
+- **WebSocket断开**: 检查防火墙和代理设置

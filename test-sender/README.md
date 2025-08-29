@@ -365,19 +365,17 @@ hal_status_t adc_read_channel(void* handle, uint8_t channel, uint16_t* value) {
 
 系统设计为与data-reader组件无缝协作：
 
-1. **启动data-reader**（socket模式）:
-```bash
-./data-reader -s
-```
-
-2. **启动device simulator**:
+1. **启动device simulator**:
 ```bash
 ./device-simulator
 ```
 
+2. **启动data-processor**（socket模式）:
+```bash
+../data-processor/start_app.bat
+```
 3. **测试完整管道**:
 - 模拟器生成数据
-- Data-reader处理帧
 - Data-processor处理分析
 - 前端显示结果
 
