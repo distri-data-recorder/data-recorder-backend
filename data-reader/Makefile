@@ -3,7 +3,7 @@ TARGET     := serialread
 VERSION    := 1.0
 
 # 源文件和包含目录
-SRCS       := serialread.c protocol/protocol.c protocol/io_buffer.c shared_memory.c ipc_communication.c
+SRCS       := serialread.c protocol/protocol.c protocol/io_buffer.c
 INC_DIRS   := protocol
 CC         := gcc
 
@@ -179,6 +179,12 @@ help:
 	@echo "  ./$(TARGET_EXE) -s                 # Socket 127.0.0.1:9001"
 	@echo "  ./$(TARGET_EXE) -s 192.168.1.100   # Socket 192.168.1.100:9001"
 	@echo "  ./$(TARGET_EXE) -s 192.168.1.100 8080  # Socket 192.168.1.100:8080"
+	@echo ""
+	@echo "$(BLUE)Features:$(RESET)"
+	@echo "  - Protocol V6 support"
+	@echo "  - Raw frame logging to files"
+	@echo "  - Interactive device control"
+	@echo "  - Serial and TCP socket communication"
 
 # ====== 依赖管理 ======
 -include $(DEPS)
