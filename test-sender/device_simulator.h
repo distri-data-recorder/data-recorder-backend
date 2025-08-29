@@ -144,6 +144,11 @@ typedef struct {
     int trigger_buffer_pos;
     bool trigger_occurred;
 
+    // 触发状态跟踪
+    bool trigger_event_sent;    
+    bool trigger_data_active;       
+    uint32_t trigger_timestamp;     
+
     // Communication
     connection_handle_t connection;
     bool connected;

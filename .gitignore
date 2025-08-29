@@ -146,6 +146,8 @@ shared_mem_test.*
 config.local.*
 settings.local.*
 
+#保存的数据文件
+data
 # 证书和密钥文件
 *.pem
 *.key

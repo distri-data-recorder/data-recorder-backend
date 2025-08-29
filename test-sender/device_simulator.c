@@ -33,6 +33,11 @@ bool device_init(void) {
     g_device_state.connected = false;
     g_device_state.connection = INVALID_CONNECTION;
 
+    // 初始化触发状态
+    g_device_state.trigger_event_sent = false;
+    g_device_state.trigger_data_active = false;
+    g_device_state.trigger_timestamp = 0;
+
     // Initialize channels
     g_device_state.num_channels = 2;
 
@@ -417,21 +422,108 @@ void device_generate_data_packet(void) {
     g_device_state.timestamp_ms += DATA_SEND_INTERVAL_MS;
 }
 
+
+void device_generate_trigger_data_packet(void) {
+    uint8_t payload[2048];
+    uint16_t payload_offset = 0;
+    uint16_t enabled_channels = 0;
+    uint16_t sample_count = 0;
+
+    // 确保通道已启用
+    for (int i = 0; i < g_device_state.num_channels; i++) {
+        if (g_device_state.channels[i].enabled) {
+            enabled_channels |= (1 << i);
+            if (sample_count == 0) {
+                sample_count = (g_device_state.channels[i].current_sample_rate * DATA_SEND_INTERVAL_MS) / 1000;
+                if (sample_count == 0) sample_count = 10; // 默认每包10个样本
+                if (sample_count > 100) sample_count = 100;
+            }
+        }
+    }
+
+    // 如果没有启用通道，自动启用默认通道
+    if (enabled_channels == 0) {
+        g_device_state.channels[0].enabled = true;
+        g_device_state.channels[0].current_sample_rate = 10000;
+        g_device_state.channels[0].current_format = 0x01;
+        g_device_state.channels[1].enabled = true;
+        g_device_state.channels[1].current_sample_rate = 10000;
+        g_device_state.channels[1].current_format = 0x01;
+        
+        enabled_channels = 0x0003; // 通道0和1
+        sample_count = 10;
+        
+        PLATFORM_PRINTF("Auto-enabled channels for trigger: 0x%04X, samples: %u\n", 
+               enabled_channels, sample_count);
+    }
+
+    // 使用触发时间戳而不是当前时间戳
+    uint32_t packet_timestamp = g_device_state.trigger_timestamp + 
+                               (g_device_state.trigger_data_packets_sent * DATA_SEND_INTERVAL_MS);
+
+    // 填充数据包头
+    memcpy(payload + payload_offset, &packet_timestamp, sizeof(packet_timestamp));
+    payload_offset += sizeof(packet_timestamp);
+    
+    memcpy(payload + payload_offset, &enabled_channels, sizeof(enabled_channels));
+    payload_offset += sizeof(enabled_channels);
+    
+    memcpy(payload + payload_offset, &sample_count, sizeof(sample_count));
+    payload_offset += sizeof(sample_count);
+
+    // 生成触发相关的数据（可以模拟触发前后的信号变化）
+    for (int i = 0; i < g_device_state.num_channels; i++) {
+        if (!(enabled_channels & (1 << i))) {
+            continue;
+        }
+
+        for (uint16_t s = 0; s < sample_count; s++) {
+            // 为触发数据生成特殊信号（例如在触发点附近有显著变化）
+            int16_t base_sample = data_source_get_sample(i, 
+                (packet_timestamp / DATA_SEND_INTERVAL_MS) * sample_count + s);
+            
+            // 在触发数据中加入明显的信号特征
+            if (g_device_state.trigger_data_packets_sent < 3) {
+                // 前几个包模拟触发前的信号
+                base_sample = (int16_t)(base_sample * 1.5 + 500);
+            } else {
+                // 后面的包模拟触发后的信号
+                base_sample = (int16_t)(base_sample * 0.8 - 200);
+            }
+            
+            memcpy(payload + payload_offset, &base_sample, sizeof(base_sample));
+            payload_offset += sizeof(base_sample);
+        }
+    }
+
+    // 发送数据包
+    bool sent = device_send_response(CMD_DATA_PACKET, g_device_state.seq_counter++, payload, payload_offset);
+    if (sent) {
+        PLATFORM_PRINTF("Trigger data packet sent: ts=%u, channels=0x%04X, samples=%u, size=%u\n", 
+               packet_timestamp, enabled_channels, sample_count, payload_offset);
+    } else {
+        PLATFORM_PRINTF("Failed to send trigger data packet\n");
+    }
+}
+
 // ===================== Trigger Simulation =====================
 
 void device_schedule_next_trigger(void) {
     if (!g_device_state.trigger_simulation_active) return;
     
-
-    // Random 10-15 seconds
+    // 随机10-15秒间隔
     int random_seconds = 10 + (rand() % 6);
     g_device_state.next_trigger_time = PLATFORM_TICK() + (random_seconds * 1000);
     
-    // Random data packets: 50ms-100ms worth (5-10 packets)
+    // 随机5-10个数据包（50-100ms的数据）
     g_device_state.trigger_data_packets_to_send = 5 + (rand() % 6);
+    
+    // 重置触发状态
+    g_device_state.trigger_event_sent = false;
+    g_device_state.trigger_data_active = false;
     g_device_state.trigger_data_packets_sent = 0;
 
-    PLATFORM_PRINTF("Next trigger in %d seconds, will send %d packets\n", 
+    PLATFORM_PRINTF("Next trigger scheduled in %d seconds, will send %d packets\n", 
            random_seconds, g_device_state.trigger_data_packets_to_send);
 }
 
@@ -440,20 +532,20 @@ void device_handle_trigger_simulation(void) {
     
     uint32_t current_time = PLATFORM_TICK();
     
-    // Check if trigger time reached
+    // 检查是否到达触发时间
     if (current_time >= g_device_state.next_trigger_time && 
-        g_device_state.trigger_data_packets_sent == 0) {
+        !g_device_state.trigger_event_sent) {
         
-        // Send trigger event
+        // 发送触发事件
         uint8_t event_payload[16];
-        uint32_t trigger_timestamp = current_time;
+        g_device_state.trigger_timestamp = current_time;
         uint16_t trigger_channel = 0;
         uint32_t pre_samples = g_device_state.pre_trigger_samples;
         uint32_t post_samples = g_device_state.post_trigger_samples;
 
         uint16_t offset = 0;
-        memcpy(event_payload + offset, &trigger_timestamp, sizeof(trigger_timestamp));
-        offset += sizeof(trigger_timestamp);
+        memcpy(event_payload + offset, &g_device_state.trigger_timestamp, sizeof(g_device_state.trigger_timestamp));
+        offset += sizeof(g_device_state.trigger_timestamp);
         memcpy(event_payload + offset, &trigger_channel, sizeof(trigger_channel));
         offset += sizeof(trigger_channel);
         memcpy(event_payload + offset, &pre_samples, sizeof(pre_samples));
@@ -462,18 +554,31 @@ void device_handle_trigger_simulation(void) {
         offset += sizeof(post_samples);
 
         device_send_response(CMD_EVENT_TRIGGERED, g_device_state.seq_counter++, event_payload, offset);
-        device_send_log_message(2, "Trigger event detected");
-        PLATFORM_PRINTF("Trigger event sent!\n");
+        device_send_log_message(2, "Trigger event detected - starting data transfer");
+        PLATFORM_PRINTF("Trigger event sent! Starting data transfer...\n");
         
+        // 设置状态
+        g_device_state.trigger_event_sent = true;
+        g_device_state.trigger_data_active = true;
         g_device_state.trigger_occurred = true;
+        g_device_state.trigger_data_packets_sent = 0;
+        
+        // 立即发送第一个数据包
+        device_generate_trigger_data_packet();
+        g_device_state.trigger_data_packets_sent++;
+        
+        PLATFORM_PRINTF("Sent trigger data packet 1/%d\n", 
+               g_device_state.trigger_data_packets_to_send);
     }
     
-    // Send trigger data packets
-    if (g_device_state.trigger_data_packets_sent < g_device_state.trigger_data_packets_to_send) {
+    // 继续发送触发数据包
+    if (g_device_state.trigger_data_active && 
+        g_device_state.trigger_data_packets_sent < g_device_state.trigger_data_packets_to_send) {
+        
         static uint32_t last_packet_time = 0;
         
         if (current_time - last_packet_time >= DATA_SEND_INTERVAL_MS) {
-            device_generate_data_packet();
+            device_generate_trigger_data_packet();
             g_device_state.trigger_data_packets_sent++;
             last_packet_time = current_time;
             
@@ -481,16 +586,25 @@ void device_handle_trigger_simulation(void) {
                    g_device_state.trigger_data_packets_sent, 
                    g_device_state.trigger_data_packets_to_send);
         }
-        
-        // Transfer complete
-        if (g_device_state.trigger_data_packets_sent >= g_device_state.trigger_data_packets_to_send) {
-            device_send_response(CMD_BUFFER_TRANSFER_COMPLETE, g_device_state.seq_counter++, NULL, 0);
-            g_device_state.trigger_occurred = false;
-            PLATFORM_PRINTF("Trigger data transfer complete\n");
-        }
     }
-    if ((g_device_state.trigger_occurred == false) && (current_time >= g_device_state.next_trigger_time)) {
-        // Schedule next trigger
+    
+    // 检查是否完成传输
+    if (g_device_state.trigger_data_active && 
+        g_device_state.trigger_data_packets_sent >= g_device_state.trigger_data_packets_to_send) {
+        
+        // 发送传输完成信号
+        device_send_response(CMD_BUFFER_TRANSFER_COMPLETE, g_device_state.seq_counter++, NULL, 0);
+        device_send_log_message(1, "Trigger data transfer completed");
+        PLATFORM_PRINTF("Trigger data transfer complete - sent %d packets\n", 
+               g_device_state.trigger_data_packets_sent);
+        
+        // 重置状态，准备下一次触发
+        g_device_state.trigger_event_sent = false;
+        g_device_state.trigger_data_active = false;
+        g_device_state.trigger_occurred = false;
+        g_device_state.trigger_data_packets_sent = 0;
+        
+        // 调度下一次触发
         device_schedule_next_trigger();
     }
 }
