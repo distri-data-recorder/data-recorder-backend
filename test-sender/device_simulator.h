@@ -69,7 +69,7 @@
 // ===================== Configuration Constants =====================
 #define DEVICE_UNIQUE_ID            0x11223344AABBCCDDULL
 #define MAX_CHANNELS                4
-#define DATA_SEND_INTERVAL_MS       10
+#define DATA_SEND_INTERVAL_MS       1
 #define MAX_CSV_ROWS                10000
 #define CSV_BUFFER_SIZE             32768
 

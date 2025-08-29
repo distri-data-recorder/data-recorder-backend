@@ -422,6 +422,7 @@ void device_generate_data_packet(void) {
 void device_schedule_next_trigger(void) {
     if (!g_device_state.trigger_simulation_active) return;
     
+
     // Random 10-15 seconds
     int random_seconds = 10 + (rand() % 6);
     g_device_state.next_trigger_time = PLATFORM_TICK() + (random_seconds * 1000);
@@ -429,7 +430,7 @@ void device_schedule_next_trigger(void) {
     // Random data packets: 50ms-100ms worth (5-10 packets)
     g_device_state.trigger_data_packets_to_send = 5 + (rand() % 6);
     g_device_state.trigger_data_packets_sent = 0;
-    
+
     PLATFORM_PRINTF("Next trigger in %d seconds, will send %d packets\n", 
            random_seconds, g_device_state.trigger_data_packets_to_send);
 }
@@ -484,11 +485,13 @@ void device_handle_trigger_simulation(void) {
         // Transfer complete
         if (g_device_state.trigger_data_packets_sent >= g_device_state.trigger_data_packets_to_send) {
             device_send_response(CMD_BUFFER_TRANSFER_COMPLETE, g_device_state.seq_counter++, NULL, 0);
+            g_device_state.trigger_occurred = false;
             PLATFORM_PRINTF("Trigger data transfer complete\n");
-            
-            // Schedule next trigger
-            device_schedule_next_trigger();
         }
+    }
+    if ((g_device_state.trigger_occurred == false) && (current_time >= g_device_state.next_trigger_time)) {
+        // Schedule next trigger
+        device_schedule_next_trigger();
     }
 }
 
