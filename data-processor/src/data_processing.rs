@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{info, warn, error};
+use tracing::info;
 
 use crate::device_communication::{DataPacket, DataType, TriggerEvent};
 
@@ -80,7 +80,7 @@ pub struct TriggerBurst {
 pub struct DataQualitySummary {
     pub overall_quality: DataQuality,
     pub channel_stats: Vec<ChannelStats>,
-    pub voltage_range: (f64, f64),
+    pub value_range: (f64, f64),  // 数值范围，不假设单位
     pub anomaly_count: usize,
 }
 
@@ -132,6 +132,7 @@ impl DataProcessor {
     pub async fn run(&mut self) -> Result<()> { Ok(()) }
 
     /// 将设备上报的数据包转换为可视化友好的结构
+    /// 移除了冗余的单位转换和信号处理，专注于数据组织和批次管理
     pub fn process_packet(&mut self, packet: &DataPacket) -> Result<ProcessedData> {
         let start_time = std::time::Instant::now();
         self.packet_sequence += 1;
@@ -167,12 +168,12 @@ impl DataProcessor {
                 
                 for sample_bytes in ch_data.chunks_exact(2) {
                     let raw = i16::from_le_bytes([sample_bytes[0], sample_bytes[1]]);
-                    // 转换为电压：int16范围 (-32768 to 32767) 映射到 0-3.3V
-                    let voltage = ((raw as f64 + 32768.0) / 65535.0) * 3.3;
-                    channel_samples.push(voltage);
+                    // 直接使用设备提供的值，假设设备已完成单位转换
+                    let value = raw as f64;
+                    channel_samples.push(value);
                 }
 
-                // 计算通道统计信息
+                // 计算通道统计信息（用于质量监控，但不修改数据）
                 let (min_val, max_val, sum) = channel_samples.iter().fold(
                     (f64::INFINITY, f64::NEG_INFINITY, 0.0),
                     |(min, max, sum), &val| (min.min(val), max.max(val), sum + val)
@@ -191,13 +192,10 @@ impl DataProcessor {
             }
         }
 
-        // 2) 应用滤波处理
-        let filtered = self.apply_filter(&all_samples);
+        // 2) 数据完整性评估（不做信号处理）
+        let quality = self.assess_data_integrity(&all_samples, &channel_metadata);
 
-        // 3) 数据质量评估
-        let quality = self.assess_data_quality(&filtered, &channel_metadata);
-
-        // 4) 处理触发模式状态
+        // 3) 处理触发模式状态
         let data_type = match &packet.data_type {
             DataType::Continuous => {
                 self.current_trigger_timestamp = None;
@@ -236,7 +234,7 @@ impl DataProcessor {
             sequence: self.packet_sequence,
             channel_count,
             sample_rate: self.estimate_sample_rate(sample_count, channel_count),
-            data: filtered,
+            data: all_samples, // 使用原始数据，不进行滤波
             metadata: DataMetadata {
                 packet_count: self.packet_sequence,
                 processing_time_us: processing_time,
@@ -276,7 +274,7 @@ impl DataProcessor {
             quality_summary: DataQualitySummary {
                 overall_quality: DataQuality::Good,
                 channel_stats: Vec::new(),
-                voltage_range: (f64::INFINITY, f64::NEG_INFINITY),
+                value_range: (f64::INFINITY, f64::NEG_INFINITY),
                 anomaly_count: 0,
             },
         });
@@ -385,58 +383,64 @@ impl DataProcessor {
         index // fallback
     }
 
-    /// 应用5点移动平均滤波
-    fn apply_filter(&self, samples: &[f64]) -> Vec<f64> {
-        if samples.len() <= 5 {
-            return samples.to_vec();
-        }
-
-        let mut filtered = Vec::with_capacity(samples.len());
-        for i in 0..samples.len() {
-            if i < 2 || i + 2 >= samples.len() {
-                filtered.push(samples[i]);
-            } else {
-                let avg = (samples[i-2] + samples[i-1] + samples[i] + samples[i+1] + samples[i+2]) / 5.0;
-                filtered.push(avg);
-            }
-        }
-        filtered
-    }
-
-    /// 数据质量评估
-    fn assess_data_quality(&self, samples: &[f64], channel_info: &[ChannelMetadata]) -> DataQuality {
+    /// 数据完整性评估（替代原来的质量评估）
+    /// 专注于数据结构完整性，不假设具体的数值范围
+    fn assess_data_integrity(&self, samples: &[f64], channel_info: &[ChannelMetadata]) -> DataQuality {
         if samples.is_empty() {
             return DataQuality::Error("No samples".into());
         }
 
-        let (global_min, global_max) = samples.iter().fold(
-            (f64::INFINITY, f64::NEG_INFINITY),
-            |(min, max), &val| (min.min(val), max.max(val))
-        );
-
-        // 检查电压范围
-        if global_min < -0.1 || global_max > 3.4 {
-            return DataQuality::Warning(
-                format!("Voltage out of range: [{:.2}, {:.2}]V", global_min, global_max)
-            );
-        }
-
-        // 检查各通道的数据质量
+        // 检查数据完整性
         for ch in channel_info {
-            // 检查是否有饱和
-            if ch.min_value <= 0.05 || ch.max_value >= 3.25 {
+            // 检查是否有异常平坦的信号（可能表示传感器断开）
+            let range = ch.max_value - ch.min_value;
+            if range < 0.001 && ch.sample_count > 10 {
                 return DataQuality::Warning(
-                    format!("Channel {} near saturation: [{:.2}, {:.2}]V", 
-                            ch.channel_id, ch.min_value, ch.max_value)
+                    format!("Channel {} signal appears flat: range={:.6}", ch.channel_id, range)
                 );
             }
 
-            // 检查是否有异常平坦的信号
-            let range = ch.max_value - ch.min_value;
-            if range < 0.001 {
+            // 检查是否有明显的异常值（使用统计学方法，不假设具体范围）
+            let mean = ch.avg_value;
+            let threshold = range * 10.0; // 10倍range作为异常阈值
+            if threshold > 0.0 && (ch.max_value - mean).abs() > threshold {
                 return DataQuality::Warning(
-                    format!("Channel {} signal too flat: range={:.4}V", ch.channel_id, range)
+                    format!("Channel {} may have outlier values", ch.channel_id)
                 );
+            }
+        }
+
+        // 检查采样数据的连续性
+        if samples.len() != channel_info.iter().map(|ch| ch.sample_count).sum::<usize>() {
+            return DataQuality::Error("Sample count mismatch between channels".into());
+        }
+
+        DataQuality::Good
+    }
+
+    /// 简化的质量评估（用于批次级别分析）
+    fn assess_burst_quality(&self, burst: &TriggerBurst) -> DataQuality {
+        // 检查数据完整性
+        if !burst.is_complete {
+            return DataQuality::Warning("Trigger data incomplete".to_string());
+        }
+
+        if burst.data_packets.is_empty() {
+            return DataQuality::Error("No data packets in trigger burst".to_string());
+        }
+
+        // 检查数据包的时间连续性
+        if burst.data_packets.len() > 1 {
+            let mut prev_timestamp = burst.data_packets[0].timestamp;
+            for packet in &burst.data_packets[1..] {
+                let time_diff = packet.timestamp.saturating_sub(prev_timestamp);
+                // 检查时间间隔是否合理（允许一定的抖动）
+                if time_diff > 50 || time_diff == 0 {  // 超过50ms或时间戳重复
+                    return DataQuality::Warning(
+                        format!("Irregular timing detected: {}ms gap", time_diff)
+                    );
+                }
+                prev_timestamp = packet.timestamp;
             }
         }
 
@@ -451,9 +455,9 @@ impl DataProcessor {
         (samples_per_channel as f64 / packet_interval_ms) * 1000.0
     }
 
-    /// 计算质量摘要
+    /// 增强的批次统计计算（可选的分析功能）
     fn calculate_quality_summary(&self, burst: &mut TriggerBurst) {
-        // 计算全局统计信息
+        // 计算全局统计信息，但不修改原始数据
         let mut all_samples = Vec::new();
         let mut channel_data: HashMap<u8, Vec<f64>> = HashMap::new();
 
@@ -467,11 +471,11 @@ impl DataProcessor {
             }
         }
 
-        // 计算电压范围
+        // 计算数值范围（不假设单位）
         if !all_samples.is_empty() {
             let min_val = all_samples.iter().fold(f64::INFINITY, |a, &b| a.min(b));
             let max_val = all_samples.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-            burst.quality_summary.voltage_range = (min_val, max_val);
+            burst.quality_summary.value_range = (min_val, max_val);
         }
 
         // 计算各通道统计信息
@@ -500,28 +504,6 @@ impl DataProcessor {
 
         // 评估整体质量
         burst.quality_summary.overall_quality = self.assess_burst_quality(burst);
-    }
-
-    fn assess_burst_quality(&self, burst: &TriggerBurst) -> DataQuality {
-        let (min_val, max_val) = burst.quality_summary.voltage_range;
-        
-        // 检查电压范围
-        if min_val < -0.1 || max_val > 3.4 {
-            return DataQuality::Warning(
-                format!("Voltage out of range: [{:.2}, {:.2}]V", min_val, max_val)
-            );
-        }
-
-        // 检查数据完整性
-        if !burst.is_complete {
-            return DataQuality::Warning("Trigger data incomplete".to_string());
-        }
-
-        if burst.data_packets.is_empty() {
-            return DataQuality::Error("No data packets in trigger burst".to_string());
-        }
-
-        DataQuality::Good
     }
 
     pub fn calculate_duration_ms(&self, burst: &TriggerBurst) -> f64 {

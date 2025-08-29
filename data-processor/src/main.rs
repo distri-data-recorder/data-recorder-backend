@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
     
     let event_handle = tokio::spawn(async move {
         let mut packet_count = 0u64;
-        let mut current_burst_id: Option<String> = None;
+        let mut _current_burst_id: Option<String> = None;
         
         while let Some(event) = device_events.recv().await {
             match event {
@@ -86,11 +86,11 @@ async fn main() -> Result<()> {
                     // 重置数据处理器状态
                     let mut processor = data_processor_clone.lock().await;
                     processor.reset_trigger_state();
-                    current_burst_id = None;
+                    _current_burst_id = None;
                 }
                 DeviceEvent::Disconnected => {
                     warn!("Device disconnected");
-                    current_burst_id = None;
+                    _current_burst_id = None;
                 }
                 DeviceEvent::TriggerEvent(trigger_event) => {
                     info!("Trigger event received: timestamp={}, channel={}, pre={}, post={}", 
@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
                         let mut processor = data_processor_clone.lock().await;
                         processor.start_trigger_burst(&trigger_event)
                     };
-                    current_burst_id = Some(burst_id);
+                    _current_burst_id = Some(burst_id);
                     
                     // 广播触发事件到WebSocket客户端
                     let _ = trigger_event_tx_clone.send(trigger_event);
@@ -175,7 +175,7 @@ async fn main() -> Result<()> {
                               stats.total_packets_processed, stats.current_trigger_burst_sequence);
                     }
                     
-                    current_burst_id = None;
+                    _current_burst_id = None;
                 }
                 DeviceEvent::StatusUpdate(status) => {
                     info!("Device status: connected={}, id={:?}, fw={:?}, mode={:?}", 

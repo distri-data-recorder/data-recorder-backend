@@ -402,7 +402,7 @@ impl WebSocketServer {
             "created_at": trigger_burst.created_at,
             "preview_samples": Self::extract_preview_samples(trigger_burst),
             "channel_stats": trigger_burst.quality_summary.channel_stats,
-            "voltage_range": trigger_burst.quality_summary.voltage_range,
+            "voltage_range": trigger_burst.quality_summary.value_range,
             "event_time": chrono::Utc::now().timestamp_millis()
         });
 
