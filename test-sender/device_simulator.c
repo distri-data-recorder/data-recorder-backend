@@ -424,7 +424,7 @@ void device_generate_data_packet(void) {
 
 
 void device_generate_trigger_data_packet(void) {
-    uint8_t payload[2048];
+    uint8_t payload[8192];
     uint16_t payload_offset = 0;
     uint16_t enabled_channels = 0;
     uint16_t sample_count = 0;
@@ -440,7 +440,7 @@ void device_generate_trigger_data_packet(void) {
             }
         }
     }
-
+    sample_count = 2000;
     // 如果没有启用通道，自动启用默认通道
     if (enabled_channels == 0) {
         g_device_state.channels[0].enabled = true;
@@ -451,7 +451,7 @@ void device_generate_trigger_data_packet(void) {
         g_device_state.channels[1].current_format = 0x01;
         
         enabled_channels = 0x0003; // 通道0和1
-        sample_count = 10;
+        sample_count = 5000;
         
         PLATFORM_PRINTF("Auto-enabled channels for trigger: 0x%04X, samples: %u\n", 
                enabled_channels, sample_count);
@@ -478,19 +478,19 @@ void device_generate_trigger_data_packet(void) {
         }
 
         for (uint16_t s = 0; s < sample_count; s++) {
-            // 为触发数据生成特殊信号（例如在触发点附近有显著变化）
-            int16_t base_sample = data_source_get_sample(i, 
-                (packet_timestamp / DATA_SEND_INTERVAL_MS) * sample_count + s);
+            // // 为触发数据生成特殊信号（例如在触发点附近有显著变化）
+            // int16_t base_sample = data_source_get_sample(i, 
+            //     (packet_timestamp / DATA_SEND_INTERVAL_MS) * sample_count + s);
             
-            // 在触发数据中加入明显的信号特征
-            if (g_device_state.trigger_data_packets_sent < 3) {
-                // 前几个包模拟触发前的信号
-                base_sample = (int16_t)(base_sample * 1.5 + 500);
-            } else {
-                // 后面的包模拟触发后的信号
-                base_sample = (int16_t)(base_sample * 0.8 - 200);
-            }
-            
+            // // 在触发数据中加入明显的信号特征
+            // if (g_device_state.trigger_data_packets_sent < 3) {
+            //     // 前几个包模拟触发前的信号
+            //     base_sample = (int16_t)(base_sample * 1.5 + 500);
+            // } else {
+            //     // 后面的包模拟触发后的信号
+            //     base_sample = (int16_t)(base_sample * 0.8 - 200);
+            // }
+            int16_t base_sample = (int16_t)s;
             memcpy(payload + payload_offset, &base_sample, sizeof(base_sample));
             payload_offset += sizeof(base_sample);
         }

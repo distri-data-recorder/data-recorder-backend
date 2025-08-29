@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trigger Mode Data Save Test</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            border: 1px solid #e1e8ed;
+        }
+
+        .header h1 {
+            color: #1a202c;
+            margin-bottom: 8px;
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .header p {
+            color: #718096;
+            font-size: 14px;
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 20px;
+        }
+
+        .bursts-section {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            border: 1px solid #e1e8ed;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1a202c;
+        }
+
+        .refresh-btn {
+            background: #4299e1;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .refresh-btn:hover {
+            background: #3182ce;
+        }
+
+        .burst-grid {
+            display: grid;
+            gap: 16px;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+
+        .burst-card {
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 16px;
+            transition: all 0.2s;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .burst-card:hover {
+            border-color: #4299e1;
+            box-shadow: 0 4px 12px rgba(66, 153, 225, 0.15);
+        }
+
+        .burst-card.selected {
+            border-color: #4299e1;
+            background: #ebf8ff;
+        }
+
+        .burst-card.complete {
+            border-left: 4px solid #48bb78;
+        }
+
+        .burst-card.incomplete {
+            border-left: 4px solid #ed8936;
+        }
+
+        .burst-id {
+            font-weight: 600;
+            color: #1a202c;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .burst-meta {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 12px;
+            font-size: 12px;
+        }
+
+        .meta-item {
+            color: #718096;
+        }
+
+        .meta-value {
+            font-weight: 500;
+            color: #2d3748;
+        }
+
+        .quality-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .quality-good {
+            background: #c6f6d5;
+            color: #276749;
+        }
+
+        .quality-warning {
+            background: #feebc8;
+            color: #c05621;
+        }
+
+        .quality-error {
+            background: #fed7d7;
+            color: #c53030;
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .save-panel {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            border: 1px solid #e1e8ed;
+        }
+
+        .save-form {
+            display: grid;
+            gap: 16px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #2d3748;
+            margin-bottom: 6px;
+        }
+
+        .form-input, .form-select, .form-textarea {
+            padding: 10px 12px;
+            border: 2px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
+            outline: none;
+            border-color: #4299e1;
+        }
+
+        .form-textarea {
+            resize: vertical;
+            min-height: 60px;
+        }
+
+        .save-btn {
+            background: #48bb78;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .save-btn:hover {
+            background: #38a169;
+        }
+
+        .save-btn:disabled {
+            background: #a0aec0;
+            cursor: not-allowed;
+        }
+
+        .preview-panel {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            border: 1px solid #e1e8ed;
+        }
+
+        .chart-container {
+            height: 400px;
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        .chart-selector {
+            margin-bottom: 16px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .chart-selector label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #2d3748;
+            margin-right: 8px;
+        }
+
+        .chart-selector select {
+            padding: 6px 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .stat-card {
+            background: #f7fafc;
+            padding: 12px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: 600;
+            color: #1a202c;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .files-panel {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            border: 1px solid #e1e8ed;
+        }
+
+        .file-list {
+            display: grid;
+            gap: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            background: #f7fafc;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .file-info {
+            flex: 1;
+        }
+
+        .file-name {
+            font-weight: 500;
+            color: #1a202c;
+            font-size: 14px;
+        }
+
+        .file-meta {
+            font-size: 12px;
+            color: #718096;
+            margin-top: 2px;
+        }
+
+        .file-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .download-btn {
+            background: #4299e1;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.2s;
+        }
+
+        .download-btn:hover {
+            background: #3182ce;
+        }
+
+        .status-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 16px;
+            border-radius: 6px;
+            color: white;
+            font-weight: 500;
+            font-size: 14px;
+            z-index: 1000;
+            transition: all 0.3s;
+        }
+
+        .status-connected {
+            background: #48bb78;
+        }
+
+        .status-disconnected {
+            background: #f56565;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #1a202c;
+            color: white;
+            padding: 16px 20px;
+            border-radius: 8px;
+            z-index: 1001;
+            transform: translateX(100%);
+            transition: transform 0.3s;
+            max-width: 300px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .toast.show {
+            transform: translateX(0);
+        }
+
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 50%;
+            border-top-color: #4299e1;
+            animation: spin 0.8s ease-in-out infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #718096;
+        }
+
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        @media (max-width: 768px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="status-indicator status-disconnected" id="statusIndicator">
+        Disconnected
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>Trigger Mode Data Save Test</h1>
+            <p>Test and manage trigger burst data saving functionality</p>
+            
+            <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+                    <button class="refresh-btn" onclick="pingDevice()" style="background: #4299e1;">
+                        Ping Device
+                    </button>
+                    <button class="refresh-btn" onclick="setTriggerMode()" style="background: #ed8936;">
+                        Set Trigger Mode
+                    </button>
+                    <button class="refresh-btn" onclick="startCollection()" style="background: #48bb78;">
+                        Start Collection
+                    </button>
+                    <button class="refresh-btn" onclick="stopCollection()" style="background: #f56565;">
+                        Stop Collection
+                    </button>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-left: auto;">
+                        <span style="font-size: 12px; color: #718096;">System Status:</span>
+                        <div id="systemStatus" style="padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; background: #e2e8f0; color: #4a5568;">
+                            Unknown
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-grid">
+            <div class="bursts-section">
+                <div class="section-header">
+                    <h2 class="section-title">Available Trigger Bursts</h2>
+                    <button class="refresh-btn" onclick="refreshBursts()">
+                        <span id="refreshIcon">âŸ³</span> Refresh
+                    </button>
+                </div>
+                <div class="burst-grid" id="burstGrid">
+                    <div class="empty-state">
+                        <div class="empty-icon">ðŸ“Š</div>
+                        <p>No trigger bursts available</p>
+                        <small>Set device to trigger mode and start collection to generate test data</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar">
+                <div class="save-panel">
+                    <div class="section-header">
+                        <h3 class="section-title">Save Configuration</h3>
+                    </div>
+                    <form class="save-form" id="saveForm">
+                        <div class="form-group">
+                            <label class="form-label">Directory Path (optional)</label>
+                            <input type="text" class="form-input" id="saveDir" placeholder="experiments/test_data">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">Custom Filename</label>
+                            <input type="text" class="form-input" id="saveFilename" placeholder="measurement_001">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">File Format</label>
+                            <select class="form-select" id="saveFormat">
+                                <option value="json">JSON (with metadata)</option>
+                                <option value="csv">CSV (for analysis)</option>
+                                <option value="binary">Binary (compact)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">Description</label>
+                            <textarea class="form-textarea" id="saveDescription" placeholder="Enter a description for this measurement..."></textarea>
+                        </div>
+                        
+                        <button type="submit" class="save-btn" id="saveBtn" disabled>
+                            Save Selected Burst
+                        </button>
+                    </form>
+                </div>
+
+                <div class="preview-panel">
+                    <div class="section-header">
+                        <h3 class="section-title">Burst Preview</h3>
+                    </div>
+                    <div id="previewContent">
+                        <div class="empty-state">
+                            <div class="empty-icon">ðŸ‘</div>
+                            <p>Select a burst to preview</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="files-panel" style="margin-top: 20px;">
+            <div class="section-header">
+                <h3 class="section-title">Saved Files</h3>
+                <button class="refresh-btn" onclick="refreshFiles()">
+                    <span id="filesRefreshIcon">âŸ³</span> Refresh
+                </button>
+            </div>
+            <div class="file-list" id="fileList">
+                <div class="empty-state">
+                    <div class="empty-icon">ðŸ“</div>
+                    <p>No saved files</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+        // Configuration
+        const API_BASE = 'http://127.0.0.1:8080/api';
+        
+        // State
+        let bursts = [];
+        let selectedBurstId = null;
+        let chart = null;
+        let echartsInstance = null;
+        let files = [];
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeApp();
+            setupEventListeners();
+            loadSavedSettings();
+        });
+
+        async function initializeApp() {
+            showStatus('connected');
+            await getSystemStatus();
+            await refreshBursts();
+            await refreshFiles();
+            setInterval(autoRefresh, 10000);
+        }
+
+        // Device control functions
+        async function pingDevice() {
+            try {
+                const response = await fetch(`${API_BASE}/control/ping`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    showToast('Device ping successful', 'success');
+                    await getSystemStatus();
+                } else {
+                    showToast(`Ping failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                console.error('Ping error:', error);
+                showToast('Failed to ping device', 'error');
+                showStatus('disconnected');
+            }
+        }
+
+        async function setTriggerMode() {
+            try {
+                const response = await fetch(`${API_BASE}/control/trigger_mode`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    showToast('Switched to trigger mode', 'success');
+                    await getSystemStatus();
+                    setTimeout(() => {
+                        showToast('Trigger mode active. Start collection to begin monitoring for triggers.', 'info');
+                    }, 1000);
+                } else {
+                    showToast(`Failed to set trigger mode: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                console.error('Set trigger mode error:', error);
+                showToast('Failed to set trigger mode', 'error');
+            }
+        }
+
+        async function startCollection() {
+            try {
+                const response = await fetch(`${API_BASE}/control/start`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    showToast('Data collection started', 'success');
+                    await getSystemStatus();
+                    setTimeout(() => {
+                        showToast('System is now monitoring for trigger events...', 'info');
+                    }, 1000);
+                } else {
+                    showToast(`Failed to start collection: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                console.error('Start collection error:', error);
+                showToast('Failed to start collection', 'error');
+            }
+        }
+
+        async function stopCollection() {
+            try {
+                const response = await fetch(`${API_BASE}/control/stop`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    showToast('Data collection stopped', 'warning');
+                    await getSystemStatus();
+                } else {
+                    showToast(`Failed to stop collection: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                console.error('Stop collection error:', error);
+                showToast('Failed to stop collection', 'error');
+            }
+        }
+
+        async function getSystemStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/control/status`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    updateSystemStatus(data.data);
+                    showStatus('connected');
+                } else {
+                    showStatus('disconnected');
+                }
+            } catch (error) {
+                console.error('Get status error:', error);
+                showStatus('disconnected');
+            }
+        }
+
+        function updateSystemStatus(status) {
+            const statusElement = document.getElementById('systemStatus');
+            let statusText = 'Unknown';
+            let statusColor = '#e2e8f0';
+            let textColor = '#4a5568';
+            
+            if (status.device_connected && status.data_collection_active) {
+                if (status.current_mode === 'trigger') {
+                    statusText = 'Trigger Mode Active';
+                    statusColor = '#48bb78';
+                    textColor = '#22543d';
+                } else {
+                    statusText = 'Collecting (Continuous)';
+                    statusColor = '#4299e1';
+                    textColor = '#1a365d';
+                }
+            } else if (status.device_connected && !status.data_collection_active) {
+                statusText = status.current_mode === 'trigger' ? 'Trigger Mode Ready' : 'Device Ready';
+                statusColor = '#ed8936';
+                textColor = '#7b341e';
+            } else if (!status.device_connected) {
+                statusText = 'Device Disconnected';
+                statusColor = '#f56565';
+                textColor = '#742a2a';
+            }
+            
+            statusElement.textContent = statusText;
+            statusElement.style.background = statusColor;
+            statusElement.style.color = textColor;
+            
+            document.title = `Trigger Save Test - ${statusText}`;
+        }
+
+        function setupEventListeners() {
+            document.getElementById('saveForm').addEventListener('submit', handleSaveSubmit);
+            
+            ['saveDir', 'saveFormat', 'saveDescription'].forEach(id => {
+                document.getElementById(id).addEventListener('change', saveSettings);
+                document.getElementById(id).addEventListener('input', saveSettings);
+            });
+
+            document.getElementById('saveFilename').addEventListener('focus', generateFilename);
+        }
+
+        async function refreshBursts() {
+            const refreshIcon = document.getElementById('refreshIcon');
+            refreshIcon.innerHTML = '<div class="loading"></div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/trigger/list`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    bursts = data.data || [];
+                    renderBursts();
+                    showToast(`Loaded ${bursts.length} trigger bursts`, 'info');
+                } else {
+                    showToast('Failed to load trigger bursts', 'error');
+                }
+            } catch (error) {
+                console.error('Refresh bursts error:', error);
+                showToast('Connection error', 'error');
+                showStatus('disconnected');
+            } finally {
+                refreshIcon.innerHTML = 'âŸ³';
+            }
+        }
+
+        function renderBursts() {
+            const grid = document.getElementById('burstGrid');
+            
+            if (bursts.length === 0) {
+                grid.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">ðŸ“Š</div>
+                        <p>No trigger bursts available</p>
+                        <small>Set device to trigger mode and start collection to generate test data</small>
+                    </div>
+                `;
+                return;
+            }
+
+            grid.innerHTML = bursts.map(burst => `
+                <div class="burst-card ${burst.can_save ? 'complete' : 'incomplete'}" 
+                     data-burst-id="${burst.burst_id}"
+                     onclick="selectBurst('${burst.burst_id}')">
+                    <div class="burst-id">${burst.burst_id}</div>
+                    <div class="quality-badge quality-${burst.quality.toLowerCase()}">
+                        ${burst.quality}
+                    </div>
+                    <div class="burst-meta">
+                        <div class="meta-item">
+                            <div class="meta-value">${burst.total_samples}</div>
+                            <div>Samples</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-value">Ch ${burst.trigger_channel}</div>
+                            <div>Trigger</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-value">${burst.duration_ms.toFixed(1)}ms</div>
+                            <div>Duration</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-value">${new Date(burst.created_at).toLocaleTimeString()}</div>
+                            <div>Created</div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function selectBurst(burstId) {
+            document.querySelectorAll('.burst-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            document.querySelector(`[data-burst-id="${burstId}"]`).classList.add('selected');
+            
+            selectedBurstId = burstId;
+            document.getElementById('saveBtn').disabled = false;
+            
+            await loadBurstPreview(burstId);
+            generateFilename();
+        }
+
+        async function loadBurstPreview(burstId) {
+            try {
+                const response = await fetch(`${API_BASE}/trigger/preview/${burstId}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    renderPreview(data.data);
+                } else {
+                    showToast('Failed to load burst preview', 'error');
+                }
+            } catch (error) {
+                console.error('Preview error:', error);
+                showToast('Failed to load preview', 'error');
+            }
+        }
+
+        function renderPreview(burstData) {
+            const container = document.getElementById('previewContent');
+            
+            // Get value range, don't assume voltage
+            const valueRange = burstData.quality_summary.value_range || [0, 0];
+            const minValue = valueRange[0];
+            const maxValue = valueRange[1];
+            
+            container.innerHTML = `
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">${burstData.total_samples}</div>
+                        <div class="stat-label">Total Samples</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${burstData.data_packets.length}</div>
+                        <div class="stat-label">Data Packets</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${minValue.toFixed(2)}</div>
+                        <div class="stat-label">Min Value</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${maxValue.toFixed(2)}</div>
+                        <div class="stat-label">Max Value</div>
+                    </div>
+                </div>
+                <div class="chart-selector">
+                    <label>Chart Type:</label>
+                    <select id="chartTypeSelector" onchange="updateChart(burstData)">
+                        <option value="multi-channel">Multi-Channel View (ECharts)</option>
+                        <option value="single-overview">Single Overview (Chart.js)</option>
+                    </select>
+                </div>
+                <div class="chart-container">
+                    <canvas id="previewChart" style="display: none;"></canvas>
+                    <div id="echartsContainer" style="width: 100%; height: 100%;"></div>
+                </div>
+                <div style="margin-top: 16px; padding: 12px; background: #f7fafc; border-radius: 6px;">
+                    <strong>Channel Statistics:</strong>
+                    ${burstData.quality_summary.channel_stats.map(stat => `
+                        <div style="margin-top: 8px; font-size: 12px;">
+                            <strong>CH${stat.channel_id}:</strong> 
+                            Avg: ${stat.avg_value.toFixed(3)}, 
+                            RMS: ${stat.rms_value.toFixed(3)}, 
+                            Range: ${(stat.max_value - stat.min_value).toFixed(3)}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+
+            // Create default multi-channel chart with ECharts
+            createMultiChannelChart(burstData);
+        }
+
+        function updateChart(burstData) {
+            const chartType = document.getElementById('chartTypeSelector').value;
+            const canvasElement = document.getElementById('previewChart');
+            const echartsElement = document.getElementById('echartsContainer');
+            
+            if (chartType === 'single-overview') {
+                canvasElement.style.display = 'block';
+                echartsElement.style.display = 'none';
+                
+                if (echartsInstance) {
+                    echartsInstance.dispose();
+                    echartsInstance = null;
+                }
+                
+                createPreviewChart(burstData);
+            } else {
+                canvasElement.style.display = 'none';
+                echartsElement.style.display = 'block';
+                
+                if (chart) {
+                    chart.destroy();
+                    chart = null;
+                }
+                
+                createMultiChannelChart(burstData);
+            }
+        }
+
+        function createMultiChannelChart(burstData) {
+            if (echartsInstance) {
+                echartsInstance.dispose();
+            }
+
+            const container = document.getElementById('echartsContainer');
+            echartsInstance = echarts.init(container);
+
+            // Parse channel data from burst packets
+            const channelData = parseChannelData(burstData);
+            
+            if (channelData.channels.length === 0) {
+                console.warn('No channel data available for chart');
+                return;
+            }
+
+            const series = channelData.channels.map((channelId, index) => {
+                const color = getChannelColor(index);
+                return {
+                    name: `Channel ${channelId}`,
+                    type: 'line',
+                    data: channelData.data[channelId] || [],
+                    showSymbol: false,
+                    lineStyle: {
+                        width: 1.5
+                    },
+                    itemStyle: {
+                        color: color
+                    }
+                };
+            });
+
+            const option = {
+                title: {
+                    text: 'Multi-Channel Data Preview',
+                    left: 'center',
+                    textStyle: {
+                        fontSize: 16,
+                        color: '#1a202c'
+                    }
+                },
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: {
+                        type: 'cross',
+                        label: {
+                            backgroundColor: '#6a7985'
+                        }
+                    },
+                    formatter: function(params) {
+                        let html = `<strong>Sample ${params[0].dataIndex}</strong><br/>`;
+                        params.forEach(param => {
+                            html += `${param.marker}${param.seriesName}: ${param.value.toFixed(4)}<br/>`;
+                        });
+                        return html;
+                    }
+                },
+                legend: {
+                    data: channelData.channels.map(id => `Channel ${id}`),
+                    top: 30,
+                    textStyle: {
+                        fontSize: 12
+                    }
+                },
+                grid: {
+                    left: '5%',
+                    right: '5%',
+                    bottom: '10%',
+                    top: '20%',
+                    containLabel: true
+                },
+                xAxis: {
+                    type: 'category',
+                    boundaryGap: false,
+                    name: 'Sample Index',
+                    nameLocation: 'middle',
+                    nameGap: 25,
+                    data: channelData.sampleIndices,
+                    axisLabel: {
+                        interval: 'auto'
+                    }
+                },
+                yAxis: {
+                    type: 'value',
+                    name: 'Value',
+                    nameLocation: 'middle',
+                    nameGap: 40,
+                    scale: true,
+                    axisLabel: {
+                        formatter: '{value}'
+                    }
+                },
+                series: series,
+                dataZoom: [
+                    {
+                        type: 'inside',
+                        start: 0,
+                        end: 100
+                    },
+                    {
+                        type: 'slider',
+                        start: 0,
+                        end: 100,
+                        height: 20
+                    }
+                ]
+            };
+
+            echartsInstance.setOption(option);
+            
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                if (echartsInstance) {
+                    echartsInstance.resize();
+                }
+            });
+        }
+
+        function parseChannelData(burstData) {
+            const channelData = { channels: [], data: {}, sampleIndices: [] };
+            
+            if (!burstData.data_packets || burstData.data_packets.length === 0) {
+                return channelData;
+            }
+
+            // Get unique channel IDs from channel stats
+            const channelIds = burstData.quality_summary.channel_stats.map(stat => stat.channel_id);
+            channelData.channels = [...new Set(channelIds)].sort();
+
+            // Initialize data arrays for each channel
+            channelData.channels.forEach(channelId => {
+                channelData.data[channelId] = [];
+            });
+
+            let sampleIndex = 0;
+            
+            // Process each data packet
+            for (const packet of burstData.data_packets) {
+                const samplesPerChannel = Math.floor(packet.data.length / packet.channel_count);
+                
+                // Parse non-interleaved data format (CH0 all samples, then CH1 all samples...)
+                for (let chIdx = 0; chIdx < packet.channel_count; chIdx++) {
+                    if (chIdx < channelData.channels.length) {
+                        const channelId = channelData.channels[chIdx];
+                        const startIdx = chIdx * samplesPerChannel;
+                        const endIdx = startIdx + samplesPerChannel;
+                        
+                        if (endIdx <= packet.data.length) {
+                            const channelSamples = packet.data.slice(startIdx, endIdx);
+                            channelData.data[channelId].push(...channelSamples);
+                        }
+                    }
+                }
+            }
+
+            // Generate sample indices
+            const maxLength = Math.max(...Object.values(channelData.data).map(arr => arr.length));
+            channelData.sampleIndices = Array.from({ length: Math.min(maxLength, 1000) }, (_, i) => i);
+            
+            // Limit data points for performance (show first 1000 samples)
+            channelData.channels.forEach(channelId => {
+                if (channelData.data[channelId].length > 1000) {
+                    channelData.data[channelId] = channelData.data[channelId].slice(0, 1000);
+                }
+            });
+
+            return channelData;
+        }
+
+        function getChannelColor(index) {
+            const colors = [
+                '#5470c6', '#91cc75', '#fac858', '#ee6666', 
+                '#73c0de', '#3ba272', '#fc8452', '#9a60b4', 
+                '#ea7ccc', '#d4a574'
+            ];
+            return colors[index % colors.length];
+        }
+
+        function createPreviewChart(burstData) {
+            const ctx = document.getElementById('previewChart').getContext('2d');
+            
+            if (chart) {
+                chart.destroy();
+            }
+
+            const firstPacket = burstData.data_packets[0];
+            const previewData = firstPacket ? firstPacket.data.slice(0, 200) : [];
+            
+            if (previewData.length === 0) {
+                return;
+            }
+            
+            // Dynamic Y-axis range calculation, not fixed to voltage range
+            const dataMin = Math.min(...previewData);
+            const dataMax = Math.max(...previewData);
+            const dataRange = dataMax - dataMin;
+            const padding = dataRange > 0 ? dataRange * 0.1 : 1;
+            
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: previewData.map((_, i) => i),
+                    datasets: [{
+                        label: 'Signal',
+                        data: previewData,
+                        borderColor: '#4299e1',
+                        backgroundColor: 'rgba(66, 153, 225, 0.1)',
+                        tension: 0.1,
+                        pointRadius: 0,
+                        borderWidth: 1.5
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    scales: {
+                        x: {
+                            display: false
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Value'
+                            },
+                            min: dataMin - padding,
+                            max: dataMax + padding
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        title: {
+                            display: true,
+                            text: 'Data Preview (First 200 Samples)'
+                        }
+                    }
+                }
+            });
+        }
+
+        async function handleSaveSubmit(event) {
+            event.preventDefault();
+            
+            if (!selectedBurstId) {
+                showToast('Please select a burst to save', 'error');
+                return;
+            }
+
+            const saveBtn = document.getElementById('saveBtn');
+            const originalText = saveBtn.textContent;
+            saveBtn.textContent = 'Saving...';
+            saveBtn.disabled = true;
+
+            try {
+                const saveData = {
+                    dir: document.getElementById('saveDir').value || null,
+                    filename: document.getElementById('saveFilename').value || null,
+                    format: document.getElementById('saveFormat').value,
+                    description: document.getElementById('saveDescription').value || null
+                };
+
+                const response = await fetch(`${API_BASE}/trigger/save/${selectedBurstId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(saveData)
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showToast(`Successfully saved: ${result.data.saved_path}`, 'success');
+                    await refreshFiles();
+                    
+                    document.getElementById('saveFilename').value = '';
+                    document.getElementById('saveDescription').value = '';
+                } else {
+                    showToast(`Save failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                console.error('Save error:', error);
+                showToast('Save operation failed', 'error');
+            } finally {
+                saveBtn.textContent = originalText;
+                saveBtn.disabled = !selectedBurstId;
+            }
+        }
+
+        async function refreshFiles() {
+            const refreshIcon = document.getElementById('filesRefreshIcon');
+            refreshIcon.innerHTML = '<div class="loading"></div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/files`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    files = data.data || [];
+                    renderFiles();
+                }
+            } catch (error) {
+                console.error('Refresh files error:', error);
+            } finally {
+                refreshIcon.innerHTML = 'âŸ³';
+            }
+        }
+
+        function renderFiles() {
+            const fileList = document.getElementById('fileList');
+            
+            if (files.length === 0) {
+                fileList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">ðŸ“</div>
+                        <p>No saved files</p>
+                    </div>
+                `;
+                return;
+            }
+
+            fileList.innerHTML = files.map(file => `
+                <div class="file-item">
+                    <div class="file-info">
+                        <div class="file-name">${file.filename}</div>
+                        <div class="file-meta">
+                            ${formatBytes(file.size_bytes)} â€¢ 
+                            ${new Date(file.created_at).toLocaleString()} â€¢ 
+                            ${file.file_type}
+                        </div>
+                    </div>
+                    <div class="file-actions">
+                        <button class="download-btn" onclick="downloadFile('${file.filename}')">
+                            Download
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function downloadFile(filename) {
+            try {
+                const response = await fetch(`${API_BASE}/files/${encodeURIComponent(filename)}`);
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename.split('/').pop();
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                    
+                    showToast(`Downloaded: ${filename}`, 'success');
+                } else {
+                    showToast('Download failed', 'error');
+                }
+            } catch (error) {
+                console.error('Download error:', error);
+                showToast('Download failed', 'error');
+            }
+        }
+
+        function generateFilename() {
+            if (!selectedBurstId) return;
+            
+            const burst = bursts.find(b => b.burst_id === selectedBurstId);
+            if (!burst) return;
+            
+            const filenameInput = document.getElementById('saveFilename');
+            if (filenameInput.value.trim() === '') {
+                const timestamp = new Date(burst.created_at).toISOString().slice(0, 19).replace(/:/g, '-');
+                const format = document.getElementById('saveFormat').value;
+                filenameInput.value = `trigger_${burst.trigger_timestamp}_${timestamp}_${format}`;
+            }
+        }
+
+        function saveSettings() {
+            const settings = {
+                saveDir: document.getElementById('saveDir').value,
+                saveFormat: document.getElementById('saveFormat').value,
+                saveDescription: document.getElementById('saveDescription').value
+            };
+            localStorage.setItem('triggerSaveSettings', JSON.stringify(settings));
+        }
+
+        function loadSavedSettings() {
+            try {
+                const settings = JSON.parse(localStorage.getItem('triggerSaveSettings') || '{}');
+                if (settings.saveDir) document.getElementById('saveDir').value = settings.saveDir;
+                if (settings.saveFormat) document.getElementById('saveFormat').value = settings.saveFormat;
+                if (settings.saveDescription) document.getElementById('saveDescription').value = settings.saveDescription;
+            } catch (e) {
+                // Ignore errors
+            }
+        }
+
+        async function autoRefresh() {
+            try {
+                await getSystemStatus();
+                
+                const response = await fetch(`${API_BASE}/trigger/list`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const newBurstCount = data.data.length;
+                    const oldBurstCount = bursts.length;
+                    
+                    if (newBurstCount !== oldBurstCount) {
+                        bursts = data.data || [];
+                        renderBursts();
+                        
+                        if (newBurstCount > oldBurstCount) {
+                            const newBursts = newBurstCount - oldBurstCount;
+                            showToast(`${newBursts} new trigger burst${newBursts > 1 ? 's' : ''} detected!`, 'success');
+                            
+                            if (!selectedBurstId && bursts.length > 0) {
+                                const newestBurst = bursts.sort((a, b) => b.created_at - a.created_at)[0];
+                                if (newestBurst.can_save) {
+                                    selectBurst(newestBurst.burst_id);
+                                    showToast('Auto-selected newest complete burst for preview', 'info');
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                showStatus('connected');
+            } catch (error) {
+                console.error('Auto refresh error:', error);
+                showStatus('disconnected');
+            }
+        }
+
+        function showStatus(status) {
+            const indicator = document.getElementById('statusIndicator');
+            indicator.className = `status-indicator status-${status}`;
+            indicator.textContent = status === 'connected' ? 'Connected' : 'Disconnected';
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            let backgroundColor = '#1a202c';
+            
+            switch (type) {
+                case 'success': backgroundColor = '#48bb78'; break;
+                case 'error': backgroundColor = '#f56565'; break;
+                case 'warning': backgroundColor = '#ed8936'; break;
+                case 'info': backgroundColor = '#4299e1'; break;
+            }
+            
+            toast.style.background = backgroundColor;
+            toast.textContent = message;
+            toast.classList.add('show');
+            
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        document.addEventListener('keydown', function(event) {
+            if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+                event.preventDefault();
+                if (selectedBurstId) {
+                    document.getElementById('saveForm').dispatchEvent(new Event('submit'));
+                } else {
+                    showToast('Select a trigger burst first', 'warning');
+                }
+            }
+            
+            if ((event.ctrlKey || event.metaKey) && event.key === 'r') {
+                event.preventDefault();
+                refreshBursts();
+            }
+            
+            if (event.key === 'F5') {
+                event.preventDefault();
+                getSystemStatus();
+                refreshBursts();
+            }
+            
+            if (event.key === 'Escape') {
+                clearSelection();
+            }
+        });
+
+        function clearSelection() {
+            selectedBurstId = null;
+            document.querySelectorAll('.burst-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            document.getElementById('saveBtn').disabled = true;
+            
+            document.getElementById('previewContent').innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">ðŸ‘</div>
+                    <p>Select a burst to preview</p>
+                </div>
+            `;
+            
+            if (chart) {
+                chart.destroy();
+                chart = null;
+            }
+            
+            if (echartsInstance) {
+                echartsInstance.dispose();
+                echartsInstance = null;
+            }
+        }
+
+        window.triggerSaveTest = {
+            refreshBursts,
+            refreshFiles,
+            clearSelection,
+            downloadFile,
+            selectBurst,
+            pingDevice,
+            setTriggerMode,
+            startCollection,
+            stopCollection,
+            getSystemStatus
+        };
+
+        console.log('Trigger Save Test initialized');
+    </script>
+</body>
+</html>
