@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据采集控制面板 (增强版)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+        .status-dot {
+            height: 10px;
+            width: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .log-panel {
+            font-family: 'Courier New', Courier, monospace;
+            background-color: #1a202c;
+            color: #a0aec0;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            height: 200px;
+            overflow-y: auto;
+            font-size: 0.875rem;
+        }
+        .log-entry {
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .log-entry.error { color: #f56565; }
+        .log-entry.success { color: #48bb78; }
+        .log-entry.info { color: #4299e1; }
+        .log-entry.ws { color: #d69e2e; }
+        #realtimeChart, #triggerPreviewChart {
+            height: 400px;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white p-4 lg:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8">
+            <h1 class="text-4xl font-bold text-center text-cyan-400">数据采集系统控制面板</h1>
+            <p class="text-center text-gray-400 mt-2">一个用于监控、控制和预览设备数据的界面 (增强版)</p>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="lg:col-span-1 space-y-6">
+                <div class="bg-gray-800 rounded-lg p-6 shadow-lg">
+                    <h2 class="text-2xl font-semibold mb-4 border-b border-gray-700 pb-2 text-gray-200">系统状态</h2>
+                    <div class="space-y-3 text-lg">
+                        <div class="flex justify-between items-center">
+                            <span>设备连接:</span>
+                            <span id="device-status" class="font-mono px-3 py-1 rounded-full text-sm">---</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span>采集状态:</span>
+                            <span id="collection-status" class="font-mono px-3 py-1 rounded-full text-sm">---</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span>当前模式:</span>
+                            <span id="current-mode" class="font-mono px-3 py-1 rounded-full text-sm">---</span>
+                        </div>
+                         <div class="flex justify-between items-center">
+                            <span>缓存触发数:</span>
+                            <span id="cached-bursts" class="font-mono">---</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span>WS连接数:</span>
+                            <span id="ws-clients" class="font-mono">---</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-gray-800 rounded-lg p-6 shadow-lg">
+                    <h2 class="text-2xl font-semibold mb-4 border-b border-gray-700 pb-2 text-gray-200">操作控制</h2>
+                    <div class="grid grid-cols-2 gap-4">
+                        <button id="btn-start" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">启动采集</button>
+                        <button id="btn-stop" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">停止采集</button>
+                        <button id="btn-continuous" class="bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">连续模式</button>
+                        <button id="btn-trigger" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">触发模式</button>
+                        <button id="btn-request-data" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 col-span-2">请求触发数据</button>
+                        <button id="btn-ping" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 col-span-2">Ping 设备</button>
+                    </div>
+                </div>
+
+                <div class="bg-gray-800 rounded-lg p-6 shadow-lg">
+                    <h2 class="text-2xl font-semibold mb-4 border-b border-gray-700 pb-2 text-gray-200">日志输出</h2>
+                    <div id="log-panel" class="log-panel"></div>
+                </div>
+            </div>
+
+            <div class="lg:col-span-2 space-y-6">
+                <div class="bg-gray-800 rounded-lg p-6 shadow-lg">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-2xl font-semibold text-gray-200">实时数据流</h2>
+                        <div class="flex items-center space-x-3 flex-wrap">
+                            <button id="btn-reset-yaxis" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-1 px-3 rounded transition duration-300 text-sm">
+                                重置Y轴
+                            </button>
+                            <button id="btn-auto-scroll" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded transition duration-300 text-sm">
+                                自动跟随
+                            </button>
+                            <button id="btn-zoom-out" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1 px-3 rounded transition duration-300 text-sm">
+                                查看全部
+                            </button>
+                            <div class="flex items-center space-x-2">
+                               <span id="ws-status-dot" class="status-dot bg-gray-500"></span>
+                               <span id="ws-status-text">未连接</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="realtimeChart"></div>
+                </div>
+
+                <div class="bg-gray-800 rounded-lg p-6 shadow-lg">
+                     <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-2xl font-semibold text-gray-200">触发数据管理</h2>
+                        <button id="btn-refresh-triggers" class="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">刷新列表</button>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="md:col-span-1 h-96 overflow-y-auto bg-gray-900 p-4 rounded-lg">
+                            <h3 class="text-lg font-semibold mb-2 text-gray-300">触发批次列表</h3>
+                            <ul id="trigger-list" class="space-y-2">
+                                <li class="text-gray-500">请点击刷新按钮获取...</li>
+                            </ul>
+                        </div>
+                        <div class="md:col-span-2">
+                             <h3 class="text-lg font-semibold mb-2 text-gray-300">触发数据预览</h3>
+                             <div id="triggerPreviewChart"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const API_BASE_URL = 'http://127.0.0.1:8080';
+    const WS_URL = 'ws://127.0.0.1:8081';
+    const STATUS_POLL_INTERVAL = 2000;
+    const CHART_MAX_POINTS = 10000;
+    const CHART_DISPLAY_POINTS = 1000;
+    const DOWNSAMPLE_THRESHOLD = 2000;
+    const CHANNEL_COLORS = ['#22d3ee', '#f87171', '#34d399', '#facc15', '#a78bfa', '#fb923c'];
+
+    let ws;
+    let realtimeChart;
+    let triggerPreviewChart;
+    let channelDataArrays = {};
+    let channelCount = 0;
+    let sampleIndex = 0;
+    let lastUpdateTime = 0;
+    const UPDATE_INTERVAL = 100;
+    
+    let yAxisRange = { min: null, max: null };
+    let yAxisUpdateCounter = 0;
+    const Y_AXIS_UPDATE_INTERVAL = 50;
+    
+    let currentZoomRange = { start: 80, end: 100 };
+    let isAutoScroll = true;
+
+    const logPanel = document.getElementById('log-panel');
+    const deviceStatusEl = document.getElementById('device-status');
+    const collectionStatusEl = document.getElementById('collection-status');
+    const currentModeEl = document.getElementById('current-mode');
+    const cachedBurstsEl = document.getElementById('cached-bursts');
+    const wsClientsEl = document.getElementById('ws-clients');
+    const wsStatusDot = document.getElementById('ws-status-dot');
+    const wsStatusText = document.getElementById('ws-status-text');
+    const triggerListEl = document.getElementById('trigger-list');
+
+    function log(message, type = 'info') {
+        const entry = document.createElement('div');
+        entry.classList.add('log-entry', type);
+        const timestamp = new Date().toLocaleTimeString();
+        entry.textContent = '[' + timestamp + '] ' + message;
+        logPanel.appendChild(entry);
+        logPanel.scrollTop = logPanel.scrollHeight;
+    }
+
+    async function apiRequest(endpoint, method = 'GET', body = null) {
+        const url = API_BASE_URL + endpoint;
+        const options = { method: method, headers: { 'Content-Type': 'application/json' } };
+        if (body) options.body = JSON.stringify(body);
+        try {
+            const response = await fetch(url, options);
+            const data = await response.json();
+            if (data.success) {
+                log('API ' + method + ' ' + endpoint + ': ' + (typeof data.data === 'string' ? data.data : 'Success'), 'success');
+            } else {
+                log('API ' + method + ' ' + endpoint + ' FAILED: ' + data.error, 'error');
+            }
+            return data;
+        } catch (error) {
+            log('API Request Error: ' + error.message, 'error');
+            return null;
+        }
+    }
+
+    function downsampleData(data, xData, targetPoints) {
+        if (data.length <= targetPoints) {
+            return { data: data, xData: xData };
+        }
+
+        const sampledData = [];
+        const sampledXData = [];
+        const bucketSize = data.length / targetPoints;
+
+        for (let i = 0; i < targetPoints; i++) {
+            const bucketStart = Math.floor(i * bucketSize);
+            const bucketEnd = Math.floor((i + 1) * bucketSize);
+            
+            if (bucketStart >= data.length) break;
+            
+            const bucket = data.slice(bucketStart, bucketEnd);
+            const xBucket = xData.slice(bucketStart, bucketEnd);
+            
+            if (bucket.length === 1) {
+                sampledData.push(bucket[0]);
+                sampledXData.push(xBucket[0]);
+            } else if (bucket.length > 1) {
+                const min = Math.min.apply(Math, bucket);
+                const max = Math.max.apply(Math, bucket);
+                const avg = bucket.reduce(function(a, b) { return a + b; }, 0) / bucket.length;
+                
+                const range = max - min;
+                const threshold = 0.01;
+                
+                if (range > threshold) {
+                    const minIndex = bucket.indexOf(min);
+                    const maxIndex = bucket.indexOf(max);
+                    
+                    if (minIndex < maxIndex) {
+                        sampledData.push(min, max);
+                        sampledXData.push(xBucket[minIndex], xBucket[maxIndex]);
+                    } else {
+                        sampledData.push(max, min);
+                        sampledXData.push(xBucket[maxIndex], xBucket[minIndex]);
+                    }
+                } else {
+                    sampledData.push(avg);
+                    sampledXData.push(xBucket[Math.floor(bucket.length / 2)]);
+                }
+            }
+        }
+
+        return { data: sampledData, xData: sampledXData };
+    }
+
+    function calculateYAxisRange(displayData) {
+        let allValues = [];
+        
+        if (displayData) {
+            displayData.forEach(function(seriesData) {
+                if (seriesData && seriesData.length > 0) {
+                    allValues = allValues.concat(seriesData);
+                }
+            });
+        } else {
+            for (let i = 0; i < channelCount; i++) {
+                if (channelDataArrays[i] && channelDataArrays[i].data.length > 0) {
+                    allValues = allValues.concat(channelDataArrays[i].data);
+                }
+            }
+        }
+        
+        if (allValues.length === 0) return;
+        
+        const min = Math.min.apply(Math, allValues);
+        const max = Math.max.apply(Math, allValues);
+        const range = max - min;
+        
+        const buffer = range > 0 ? range * 0.1 : Math.abs(max) * 0.1 || 1;
+        const newMin = min - buffer;
+        const newMax = max + buffer;
+        
+        if (yAxisRange.min !== null && yAxisRange.max !== null) {
+            const currentRange = yAxisRange.max - yAxisRange.min;
+            const rangeDiff = Math.abs(newMax - newMin - currentRange) / currentRange;
+            
+            if (rangeDiff < 0.2) {
+                if (newMin < yAxisRange.min) yAxisRange.min = newMin;
+                if (newMax > yAxisRange.max) yAxisRange.max = newMax;
+                return;
+            }
+        }
+        
+        yAxisRange.min = newMin;
+        yAxisRange.max = newMax;
+        
+        log('Y轴范围更新: [' + newMin.toFixed(2) + ', ' + newMax.toFixed(2) + ']', 'info');
+    }
+
+    function initCharts() {
+        realtimeChart = echarts.init(document.getElementById('realtimeChart'), 'dark');
+        triggerPreviewChart = echarts.init(document.getElementById('triggerPreviewChart'), 'dark');
+
+        const initialOption = {
+            backgroundColor: 'transparent',
+            tooltip: {
+                trigger: 'axis',
+                formatter: function(params) {
+                    let result = '样本: ' + params[0].axisValue + '<br/>';
+                    params.forEach(function(param) {
+                        result += param.marker + param.seriesName + ': ' + param.value.toFixed(4) + '<br/>';
+                    });
+                    return result;
+                }
+            },
+            legend: {
+                data: [],
+                textStyle: { color: '#e5e7eb' },
+                top: 10
+            },
+            toolbox: {
+                show: true,
+                right: 20,
+                top: 10,
+                feature: {
+                    dataZoom: {
+                        yAxisIndex: 'none',
+                        title: { zoom: '区域缩放', back: '还原缩放' }
+                    },
+                    restore: { title: '还原' },
+                    saveAsImage: { title: '保存图片' }
+                },
+                iconStyle: { borderColor: '#e5e7eb' },
+                emphasis: { iconStyle: { borderColor: '#22d3ee' } }
+            },
+            grid: {
+                left: '60px',
+                right: '20px',
+                bottom: '80px',
+                top: '70px',
+                containLabel: true
+            },
+            xAxis: {
+                type: 'category',
+                boundaryGap: false,
+                data: [],
+                axisLabel: {
+                    color: '#9ca3af',
+                    interval: 'auto'
+                },
+                name: '样本索引',
+                nameTextStyle: { color: '#9ca3af' }
+            },
+            yAxis: {
+                type: 'value',
+                axisLabel: { color: '#9ca3af' },
+                splitLine: { lineStyle: { color: '#374151' } },
+                name: '数值',
+                nameTextStyle: { color: '#9ca3af' },
+                min: function(value) {
+                    return yAxisRange.min !== null ? yAxisRange.min : value.min;
+                },
+                max: function(value) {
+                    return yAxisRange.max !== null ? yAxisRange.max : value.max;
+                }
+            },
+            dataZoom: [
+                {
+                    type: 'inside',
+                    start: currentZoomRange.start,
+                    end: currentZoomRange.end,
+                    zoomOnMouseWheel: true,
+                    moveOnMouseMove: true,
+                    moveOnMouseWheel: true
+                },
+                {
+                    type: 'slider',
+                    start: currentZoomRange.start,
+                    end: currentZoomRange.end,
+                    height: 25,
+                    bottom: 15,
+                    textStyle: { color: '#9ca3af' },
+                    dataBackground: {
+                        lineStyle: { color: '#374151' },
+                        areaStyle: { color: '#374151', opacity: 0.3 }
+                    },
+                    selectedDataBackground: {
+                        lineStyle: { color: '#22d3ee' },
+                        areaStyle: { color: '#22d3ee', opacity: 0.3 }
+                    },
+                    showDetail: true,
+                    showDataShadow: true
+                }
+            ],
+            series: []
+        };
+
+        realtimeChart.setOption(initialOption);
+
+        realtimeChart.on('dataZoom', function(params) {
+            if (params.batch) {
+                params.batch.forEach(function(zoom) {
+                    currentZoomRange.start = zoom.start;
+                    currentZoomRange.end = zoom.end;
+                });
+            } else {
+                currentZoomRange.start = params.start;
+                currentZoomRange.end = params.end;
+            }
+            
+            isAutoScroll = currentZoomRange.end >= 95;
+            
+            const autoScrollBtn = document.getElementById('btn-auto-scroll');
+            if (autoScrollBtn) {
+                if (isAutoScroll) {
+                    autoScrollBtn.textContent = '停止跟随';
+                    autoScrollBtn.className = 'bg-orange-600 hover:bg-orange-700 text-white font-bold py-1 px-3 rounded transition duration-300 text-sm';
+                } else {
+                    autoScrollBtn.textContent = '自动跟随';
+                    autoScrollBtn.className = 'bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded transition duration-300 text-sm';
+                }
+            }
+            
+            log('缩放范围: ' + currentZoomRange.start.toFixed(1) + '% - ' + currentZoomRange.end.toFixed(1) + '%', 'info');
+        });
+
+        window.addEventListener('resize', function() {
+            realtimeChart.resize();
+            triggerPreviewChart.resize();
+        });
+    }
+
+    function initializeChannelData(numChannels) {
+        if (channelCount === numChannels) return;
+
+        channelCount = numChannels;
+        channelDataArrays = {};
+        
+        for (let i = 0; i < numChannels; i++) {
+            channelDataArrays[i] = {
+                data: [],
+                xAxisData: []
+            };
+        }
+
+        updateChartSeries();
+        log('初始化 ' + numChannels + ' 个通道的数据结构', 'info');
+    }
+
+    function updateChartSeries() {
+        if (channelCount === 0) return;
+
+        const legendData = [];
+        const seriesData = [];
+        const displayData = [];
+
+        for (let i = 0; i < channelCount; i++) {
+            const channelName = '通道 ' + i;
+            legendData.push(channelName);
+            
+            let data = channelDataArrays[i].data;
+            let xAxisData = channelDataArrays[i].xAxisData;
+            
+            if (data.length > DOWNSAMPLE_THRESHOLD) {
+                const sampled = downsampleData(data, xAxisData, CHART_DISPLAY_POINTS);
+                data = sampled.data;
+                xAxisData = sampled.xData;
+                
+                if (i === 0) {
+                    log('数据降采样: ' + channelDataArrays[i].data.length + ' -> ' + data.length + ' 点', 'info');
+                }
+            }
+            
+            displayData.push(data);
+            
+            seriesData.push({
+                name: channelName,
+                type: 'line',
+                data: data,
+                showSymbol: false,
+                smooth: false,
+                lineStyle: {
+                    color: CHANNEL_COLORS[i % CHANNEL_COLORS.length],
+                    width: 1.5
+                },
+                animation: false
+            });
+        }
+
+        let xAxisData = channelDataArrays[0] ? channelDataArrays[0].xAxisData : [];
+        if (displayData[0] && displayData[0].length !== xAxisData.length) {
+            xAxisData = [];
+            for (let i = 0; i < displayData[0].length; i++) {
+                const originalLength = channelDataArrays[0].xAxisData.length;
+                const step = originalLength / displayData[0].length;
+                const index = Math.floor(i * step);
+                xAxisData.push(channelDataArrays[0].xAxisData[index] || i);
+            }
+        }
+
+        calculateYAxisRange(displayData);
+
+        const updateOption = {
+            legend: { data: legendData },
+            xAxis: { data: xAxisData },
+            yAxis: {
+                min: yAxisRange.min,
+                max: yAxisRange.max
+            },
+            series: seriesData
+        };
+
+        if (isAutoScroll) {
+            const totalPoints = xAxisData.length;
+            const displayPoints = Math.min(CHART_DISPLAY_POINTS, totalPoints);
+            const newStart = Math.max(0, (totalPoints - displayPoints) / totalPoints * 100);
+            
+            updateOption.dataZoom = [
+                {
+                    start: newStart,
+                    end: 100
+                },
+                {
+                    start: newStart,
+                    end: 100
+                }
+            ];
+            
+            currentZoomRange = { start: newStart, end: 100 };
+        }
+
+        realtimeChart.setOption(updateOption, false);
+    }
+
+    function addDataPoint(channelData, samplesPerChannel) {
+        if (channelCount === 0 || !channelData || channelData.length === 0) return;
+
+        const expectedLength = channelCount * samplesPerChannel;
+        if (channelData.length !== expectedLength) {
+            log('数据长度不匹配: 期望 ' + expectedLength + ', 实际 ' + channelData.length, 'error');
+            return;
+        }
+
+        for (let chIndex = 0; chIndex < channelCount; chIndex++) {
+            const startIdx = chIndex * samplesPerChannel;
+            const endIdx = startIdx + samplesPerChannel;
+            const channelSamples = channelData.slice(startIdx, endIdx);
+            
+            for (let sampleIdx = 0; sampleIdx < channelSamples.length; sampleIdx++) {
+                const value = channelSamples[sampleIdx];
+                const globalSampleIndex = sampleIndex + sampleIdx;
+                
+                channelDataArrays[chIndex].data.push(value);
+                channelDataArrays[chIndex].xAxisData.push(globalSampleIndex);
+                
+                if (channelDataArrays[chIndex].data.length > CHART_MAX_POINTS) {
+                    const removeCount = Math.floor(CHART_MAX_POINTS * 0.1);
+                    channelDataArrays[chIndex].data.splice(0, removeCount);
+                    channelDataArrays[chIndex].xAxisData.splice(0, removeCount);
+                }
+            }
+        }
+        
+        sampleIndex += samplesPerChannel;
+        
+        yAxisUpdateCounter++;
+        if (yAxisUpdateCounter % Y_AXIS_UPDATE_INTERVAL === 0) {
+            calculateYAxisRange();
+        }
+    }
+
+    function updateRealtimeChart() {
+        if (channelCount === 0) return;
+        updateChartSeries();
+    }
+
+    function toggleAutoScroll() {
+        isAutoScroll = !isAutoScroll;
+        const btn = document.getElementById('btn-auto-scroll');
+        
+        if (isAutoScroll) {
+            btn.textContent = '停止跟随';
+            btn.className = 'bg-orange-600 hover:bg-orange-700 text-white font-bold py-1 px-3 rounded transition duration-300 text-sm';
+            currentZoomRange = { start: 80, end: 100 };
+            updateRealtimeChart();
+        } else {
+            btn.textContent = '自动跟随';
+            btn.className = 'bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded transition duration-300 text-sm';
+        }
+        
+        log('自动跟随: ' + (isAutoScroll ? '启用' : '停用'), 'info');
+    }
+
+    function zoomToFullView() {
+        currentZoomRange = { start: 0, end: 100 };
+        isAutoScroll = false;
+        
+        const autoScrollBtn = document.getElementById('btn-auto-scroll');
+        if (autoScrollBtn) {
+            autoScrollBtn.textContent = '自动跟随';
+            autoScrollBtn.className = 'bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded transition duration-300 text-sm';
+        }
+        
+        calculateYAxisRange();
+        updateRealtimeChart();
+        
+        log('已切换到全视图模式', 'info');
+    }
+
+    function resetYAxisRange() {
+        yAxisRange = { min: null, max: null };
+        yAxisUpdateCounter = 0;
+        calculateYAxisRange();
+        updateRealtimeChart();
+        log('Y轴范围已重置', 'info');
+    }
+
+    function connectWebSocket() {
+        ws = new WebSocket(WS_URL);
+
+        ws.onopen = function() {
+            log('WebSocket 连接已建立', 'ws');
+            wsStatusDot.className = 'status-dot bg-green-500';
+            wsStatusText.textContent = '已连接';
+            ws.send(JSON.stringify({ type: 'subscribe', channels: ['all'] }));
+        };
+
+        ws.onmessage = function(event) {
+            const message = JSON.parse(event.data);
+            
+            if (message.type === 'data' && message.data && message.channel_count > 0) {
+                if (channelCount !== message.channel_count) {
+                    initializeChannelData(message.channel_count);
+                }
+
+                const samplesPerChannel = Math.floor(message.data.length / message.channel_count);
+                
+                if (samplesPerChannel > 0) {
+                    addDataPoint(message.data, samplesPerChannel);
+                    
+                    const now = Date.now();
+                    if (now - lastUpdateTime > UPDATE_INTERVAL) {
+                        updateRealtimeChart();
+                        lastUpdateTime = now;
+                    }
+                }
+            } else if (message.type === 'trigger_burst_complete') {
+                log('触发批次完成: ' + message.burst_id, 'ws');
+                fetchTriggerList();
+            } else if (message.type === 'trigger_event') {
+                log('触发事件: 通道 ' + message.channel + ', 时间戳 ' + message.timestamp, 'ws');
+            } else if (message.type === 'welcome') {
+                log('WebSocket 欢迎消息, 客户端ID: ' + message.client_id, 'ws');
+            } else if (message.type === 'subscription_updated') {
+                log('订阅更新完成', 'ws');
+            } else {
+                log('WS收到消息: ' + message.type, 'ws');
+            }
+        };
+
+        ws.onclose = function() {
+            log('WebSocket 连接已关闭，5秒后重连...', 'error');
+            wsStatusDot.className = 'status-dot bg-red-500';
+            wsStatusText.textContent = '已断开';
+            setTimeout(connectWebSocket, 5000);
+        };
+
+        ws.onerror = function(error) {
+            log('WebSocket 连接错误', 'error');
+            ws.close();
+        };
+    }
+
+    function updateStatusUI(statusData) {
+        function updateElement(el, text, colorClass, baseClass) {
+            baseClass = baseClass || "font-mono px-3 py-1 rounded-full text-sm";
+            el.textContent = text;
+            el.className = baseClass + ' ' + colorClass;
+        }
+
+        updateElement(deviceStatusEl, statusData.device_connected ? '已连接' : '未连接', 
+            statusData.device_connected ? 'bg-green-500 text-white' : 'bg-red-500 text-white');
+        updateElement(collectionStatusEl, statusData.data_collection_active ? '采集中' : '已停止', 
+            statusData.data_collection_active ? 'bg-cyan-500 text-white' : 'bg-gray-500 text-white');
+        updateElement(currentModeEl, statusData.current_mode === 'trigger' ? '触发模式' : '连续模式', 
+            statusData.current_mode === 'trigger' ? 'bg-orange-500 text-white' : 'bg-sky-500 text-white');
+        cachedBurstsEl.textContent = statusData.trigger_status ? statusData.trigger_status.cached_bursts : 'N/A';
+        wsClientsEl.textContent = statusData.connected_clients || 'N/A';
+    }
+
+    async function pollStatus() {
+        const result = await apiRequest('/api/control/status');
+        if (result && result.success) updateStatusUI(result.data);
+    }
+
+    async function fetchTriggerList() {
+        const result = await apiRequest('/api/trigger/list');
+        triggerListEl.innerHTML = '';
+        if (result && result.success && result.data.length > 0) {
+            result.data.forEach(function(burst) {
+                const li = document.createElement('li');
+                li.className = 'p-2 bg-gray-700 rounded-md hover:bg-cyan-800 cursor-pointer transition duration-300';
+                li.dataset.burstId = burst.burst_id;
+                li.innerHTML = '<div class="font-semibold text-sm">' + burst.burst_id.replace('trigger_', '触发_') + '</div>' +
+                    '<div class="text-xs text-gray-400">样本: ' + burst.total_samples + ' | 质量: ' + burst.quality + '</div>' +
+                    '<div class="text-xs text-gray-400">时长: ' + burst.duration_ms.toFixed(1) + 'ms</div>';
+                li.onclick = function() {
+                    const items = triggerListEl.querySelectorAll('li');
+                    for (let i = 0; i < items.length; i++) {
+                        items[i].classList.remove('ring-2', 'ring-cyan-500');
+                    }
+                    li.classList.add('ring-2', 'ring-cyan-500');
+                    previewTriggerData(burst.burst_id);
+                };
+                triggerListEl.appendChild(li);
+            });
+        } else {
+            triggerListEl.innerHTML = '<li class="text-gray-500">无可用触发数据</li>';
+        }
+    }
+
+    async function previewTriggerData(burstId) {
+        log('预览触发数据: ' + burstId, 'info');
+        const result = await apiRequest('/api/trigger/preview/' + burstId);
+        
+        if (result && result.success) {
+            const previewData = result.data;
+            renderTriggerPreview(previewData);
+        } else {
+            log('获取触发数据预览失败', 'error');
+        }
+    }
+
+    function renderTriggerPreview(burstData) {
+        if (!burstData.data_packets || burstData.data_packets.length === 0) {
+            triggerPreviewChart.setOption({
+                title: { text: '无数据可显示', left: 'center', textStyle: { color: '#9ca3af' } }
+            });
+            return;
+        }
+
+        const firstPacket = burstData.data_packets[0];
+        const previewChannelCount = firstPacket.channel_count;
+        const channelPreviewData = {};
+        let maxSampleCount = 0;
+
+        for (let i = 0; i < previewChannelCount; i++) {
+            channelPreviewData[i] = [];
+        }
+
+        burstData.data_packets.forEach(function(packet) {
+            const samplesPerChannel = Math.floor(packet.data.length / packet.channel_count);
+            
+            for (let chIndex = 0; chIndex < packet.channel_count; chIndex++) {
+                const startIdx = chIndex * samplesPerChannel;
+                const endIdx = startIdx + samplesPerChannel;
+                const channelSamples = packet.data.slice(startIdx, endIdx);
+                channelPreviewData[chIndex] = channelPreviewData[chIndex].concat(channelSamples);
+            }
+        });
+
+        Object.keys(channelPreviewData).forEach(function(key) {
+            maxSampleCount = Math.max(maxSampleCount, channelPreviewData[key].length);
+        });
+
+        const xAxisData = [];
+        for (let i = 0; i < maxSampleCount; i++) {
+            xAxisData.push(i);
+        }
+
+        const seriesData = Object.keys(channelPreviewData).map(function(chIndex, i) {
+            return {
+                name: '通道 ' + chIndex,
+                type: 'line',
+                data: channelPreviewData[chIndex],
+                showSymbol: false,
+                smooth: false,
+                lineStyle: {
+                    color: CHANNEL_COLORS[i % CHANNEL_COLORS.length],
+                    width: 1.5
+                }
+            };
+        });
+
+        const option = {
+            backgroundColor: 'transparent',
+            title: {
+                text: '触发数据预览 - ' + burstData.burst_id,
+                left: 'center',
+                textStyle: { color: '#e5e7eb', fontSize: 14 }
+            },
+            tooltip: {
+                trigger: 'axis',
+                axisPointer: { type: 'cross' }
+            },
+            legend: {
+                data: Object.keys(channelPreviewData).map(function(ch) { return '通道 ' + ch; }),
+                textStyle: { color: '#e5e7eb' },
+                top: 30
+            },
+            grid: {
+                left: '60px',
+                right: '20px',
+                bottom: '60px',
+                top: '80px',
+                containLabel: true
+            },
+            xAxis: {
+                type: 'category',
+                data: xAxisData,
+                boundaryGap: false,
+                axisLabel: { color: '#9ca3af' },
+                name: '样本索引',
+                nameTextStyle: { color: '#9ca3af' }
+            },
+            yAxis: {
+                type: 'value',
+                axisLabel: { color: '#9ca3af' },
+                splitLine: { lineStyle: { color: '#374151' } },
+                name: '数值',
+                nameTextStyle: { color: '#9ca3af' }
+            },
+            series: seriesData
+        };
+
+        triggerPreviewChart.setOption(option, true);
+    }
+
+    function setupEventListeners() {
+        document.getElementById('btn-start').addEventListener('click', function() {
+            apiRequest('/api/control/start', 'POST');
+        });
+        document.getElementById('btn-stop').addEventListener('click', function() {
+            apiRequest('/api/control/stop', 'POST');
+        });
+        document.getElementById('btn-continuous').addEventListener('click', function() {
+            apiRequest('/api/control/continuous_mode', 'POST');
+        });
+        document.getElementById('btn-trigger').addEventListener('click', function() {
+            apiRequest('/api/control/trigger_mode', 'POST');
+        });
+        document.getElementById('btn-request-data').addEventListener('click', function() {
+            apiRequest('/api/control/request_trigger_data', 'POST');
+        });
+        document.getElementById('btn-ping').addEventListener('click', function() {
+            apiRequest('/api/control/ping', 'POST');
+        });
+        document.getElementById('btn-refresh-triggers').addEventListener('click', fetchTriggerList);
+        
+        const resetYAxisBtn = document.getElementById('btn-reset-yaxis');
+        if (resetYAxisBtn) {
+            resetYAxisBtn.addEventListener('click', resetYAxisRange);
+        }
+        
+        const autoScrollBtn = document.getElementById('btn-auto-scroll');
+        if (autoScrollBtn) {
+            autoScrollBtn.addEventListener('click', toggleAutoScroll);
+        }
+        
+        const zoomOutBtn = document.getElementById('btn-zoom-out');
+        if (zoomOutBtn) {
+            zoomOutBtn.addEventListener('click', zoomToFullView);
+        }
+    }
+
+    function init() {
+        log('初始化ECharts数据采集面板...', 'info');
+        initCharts();
+        setupEventListeners();
+        connectWebSocket();
+        pollStatus();
+        setInterval(pollStatus, STATUS_POLL_INTERVAL);
+        fetchTriggerList();
+    }
+
+    init();
+});
+</script>
+
+</body>
+</html>
