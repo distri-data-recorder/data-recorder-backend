@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据采集系统 API 测试工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .log-box {
+            background-color: #1f2937;
+            color: #d1d5db;
+            font-family: 'Courier New', Courier, monospace;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .btn {
+            @apply bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-opacity-75 transition-colors duration-200;
+        }
+        .btn-secondary {
+            @apply bg-gray-500 hover:bg-gray-600;
+        }
+        .btn-success {
+            @apply bg-green-600 hover:bg-green-700;
+        }
+        .btn-danger {
+            @apply bg-red-600 hover:bg-red-700;
+        }
+        .status-dot {
+            @apply w-3 h-3 rounded-full;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-200 p-4 lg:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-6">
+            <h1 class="text-3xl font-bold text-center">数据采集系统 API 测试工具</h1>
+            <p class="text-center text-gray-500 dark:text-gray-400">一个用于与数据采集系统 API 互动和测试的界面。</p>
+        </header>
+
+        <!-- 设置区域 -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 p-4 bg-white dark:bg-gray-800 rounded-lg shadow">
+            <div>
+                <label for="base-url" class="block text-sm font-medium">HTTP API 基础 URL</label>
+                <input type="text" id="base-url" value="http://127.0.0.1:8080" class="mt-1 block w-full rounded-md bg-gray-200 dark:bg-gray-700 border-transparent focus:border-blue-500 focus:bg-white dark:focus:bg-gray-600 focus:ring-0">
+            </div>
+            <div>
+                <label for="ws-url" class="block text-sm font-medium">WebSocket URL</label>
+                <input type="text" id="ws-url" value="ws://127.0.0.1:8081" class="mt-1 block w-full rounded-md bg-gray-200 dark:bg-gray-700 border-transparent focus:border-blue-500 focus:bg-white dark:focus:bg-gray-600 focus:ring-0">
+            </div>
+            <div class="flex items-end space-x-2">
+                <button id="ws-connect-btn" class="btn btn-success w-1/2">连接 WS</button>
+                <button id="ws-disconnect-btn" class="btn btn-danger w-1/2" disabled>断开 WS</button>
+            </div>
+        </div>
+
+        <!-- 主体内容 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- 左侧：控制面板 -->
+            <div class="flex flex-col gap-6">
+                <!-- 状态显示 -->
+                <div class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow">
+                    <h2 class="text-xl font-semibold mb-3">系统状态</h2>
+                    <div class="flex items-center justify-between">
+                         <div class="flex items-center space-x-2">
+                            <div id="api-status" class="status-dot bg-gray-400" title="API 未检查"></div>
+                            <span>API 状态</span>
+                        </div>
+                         <div class="flex items-center space-x-2">
+                            <div id="ws-status" class="status-dot bg-gray-400" title="WebSocket 已断开"></div>
+                            <span>WebSocket 状态</span>
+                        </div>
+                        <button id="get-status-btn" class="btn">刷新状态</button>
+                    </div>
+                </div>
+
+                <!-- 系统控制 -->
+                <div class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow">
+                    <h2 class="text-xl font-semibold mb-3">系统控制</h2>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        <button class="btn" onclick="apiRequest('POST', '/api/control/start')">启动采集</button>
+                        <button class="btn" onclick="apiRequest('POST', '/api/control/stop')">停止采集</button>
+                        <button class="btn" onclick="apiRequest('POST', '/api/control/ping')">Ping 设备</button>
+                        <button class="btn" onclick="apiRequest('POST', '/api/control/device_info')">设备信息</button>
+                        <button class="btn" onclick="apiRequest('GET', '/health')">健康检查</button>
+                        <button class="btn" onclick="apiRequest('GET', '/')">API 信息</button>
+                    </div>
+                </div>
+
+                <!-- 模式控制 -->
+                <div class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow">
+                    <h2 class="text-xl font-semibold mb-3">模式控制</h2>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <button class="btn" onclick="apiRequest('POST', '/api/control/continuous_mode')">连续模式</button>
+                        <button class="btn" onclick="apiRequest('POST', '/api/control/trigger_mode')">触发模式</button>
+                        <button class="btn" onclick="apiRequest('POST', '/api/control/request_trigger_data')">请求触发数据</button>
+                    </div>
+                </div>
+
+                <!-- 参数配置 -->
+                <div class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow">
+                    <h2 class="text-xl font-semibold mb-3">数据流配置</h2>
+                    <textarea id="config-payload" class="w-full h-32 p-2 rounded-md bg-gray-200 dark:bg-gray-700 border-transparent focus:border-blue-500 focus:bg-white dark:focus:bg-gray-600 focus:ring-0"
+                    >{
+  "channels": [
+    { "channel_id": 0, "sample_rate": 10000, "format": 1 },
+    { "channel_id": 1, "sample_rate": 10000, "format": 1 }
+  ]
+}</textarea>
+                    <button class="btn mt-2 w-full" onclick="configureStream()">发送配置</button>
+                </div>
+
+                <!-- 触发批次管理 -->
+                <div class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow">
+                    <h2 class="text-xl font-semibold mb-3">触发批次管理</h2>
+                    <button class="btn w-full mb-3" onclick="apiRequest('GET', '/api/trigger/list', null, renderTriggerList)">获取批次列表</button>
+                    <div id="trigger-list" class="space-y-2 max-h-60 overflow-y-auto"></div>
+                </div>
+                
+                <!-- 文件管理 -->
+                <div class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow">
+                    <h2 class="text-xl font-semibold mb-3">文件管理</h2>
+                    <div class="flex flex-col space-y-3">
+                        <input type="text" id="file-dir" placeholder="子目录 (可选)" class="block w-full rounded-md bg-gray-200 dark:bg-gray-700 border-transparent focus:border-blue-500 focus:bg-white dark:focus:bg-gray-600 focus:ring-0">
+                        <button class="btn w-full" onclick="listFiles()">列出文件</button>
+                        <div id="file-list" class="space-y-2 max-h-60 overflow-y-auto"></div>
+                        <div class="pt-3 border-t border-gray-200 dark:border-gray-700">
+                             <h3 class="font-semibold">上传文件</h3>
+                             <input type="file" id="file-upload-input" class="mt-2 text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                             <button class="btn w-full mt-2" onclick="saveFile()">上传</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- 右侧：日志显示 -->
+            <div class="flex flex-col gap-6">
+                <!-- API 响应 -->
+                <div>
+                    <h2 class="text-xl font-semibold mb-2">API 响应</h2>
+                    <div id="api-response" class="log-box">点击按钮发送 API 请求...</div>
+                </div>
+                <!-- WebSocket 日志 -->
+                <div>
+                    <h2 class="text-xl font-semibold mb-2">WebSocket 日志</h2>
+                    <div id="ws-log" class="log-box">连接 WebSocket 以接收即时消息...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const baseUrlInput = document.getElementById('base-url');
+        const wsUrlInput = document.getElementById('ws-url');
+        const wsConnectBtn = document.getElementById('ws-connect-btn');
+        const wsDisconnectBtn = document.getElementById('ws-disconnect-btn');
+        const apiResponseEl = document.getElementById('api-response');
+        const wsLogEl = document.getElementById('ws-log');
+        const apiStatusDot = document.getElementById('api-status');
+        const wsStatusDot = document.getElementById('ws-status');
+        const triggerListEl = document.getElementById('trigger-list');
+        const fileListEl = document.getElementById('file-list');
+
+        let websocket = null;
+
+        // 通用 API 请求函数
+        async function apiRequest(method, endpoint, body = null, callback = null) {
+            const url = baseUrlInput.value + endpoint;
+            const options = {
+                method: method,
+                headers: { 'Content-Type': 'application/json' }
+            };
+            if (body) {
+                options.body = JSON.stringify(body);
+            }
+
+            logToApi(`=> ${method} ${url}${body ? `\n${JSON.stringify(body, null, 2)}` : ''}`);
+
+            try {
+                const response = await fetch(url, options);
+                const result = await response.json();
+                
+                logToApi(`<= ${response.status} ${response.statusText}\n${JSON.stringify(result, null, 2)}`);
+
+                if (response.ok) {
+                    apiStatusDot.classList.remove('bg-red-500', 'bg-gray-400');
+                    apiStatusDot.classList.add('bg-green-500');
+                    apiStatusDot.title = 'API 连接正常';
+                    if (callback && result.success) {
+                        callback(result.data);
+                    }
+                } else {
+                     apiStatusDot.classList.remove('bg-green-500', 'bg-gray-400');
+                     apiStatusDot.classList.add('bg-red-500');
+                     apiStatusDot.title = `API 错误: ${response.status}`;
+                }
+            } catch (error) {
+                logToApi(`<= ERROR: ${error.message}`);
+                apiStatusDot.classList.remove('bg-green-500', 'bg-gray-400');
+                apiStatusDot.classList.add('bg-red-500');
+                apiStatusDot.title = `API 错误: ${error.message}`;
+            }
+        }
+
+        // 记录到 API 响应框
+        function logToApi(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            apiResponseEl.innerHTML = `[${timestamp}] ${message}\n\n` + apiResponseEl.innerHTML;
+        }
+        
+        // 记录到 WebSocket 日志框
+        function logToWs(message, direction = 'IN') {
+            const timestamp = new Date().toLocaleTimeString();
+            const prefix = direction === 'IN' ? '<=' : '=>';
+            wsLogEl.innerHTML = `[${timestamp}] ${prefix} ${message}\n\n` + wsLogEl.innerHTML;
+        }
+
+        // WebSocket 连接
+        wsConnectBtn.addEventListener('click', () => {
+            if (websocket) return;
+            const url = wsUrlInput.value;
+            websocket = new WebSocket(url);
+
+            websocket.onopen = () => {
+                logToWs('WebSocket 已连接', 'SYS');
+                wsStatusDot.classList.remove('bg-red-500', 'bg-gray-400');
+                wsStatusDot.classList.add('bg-green-500');
+                wsStatusDot.title = 'WebSocket 已连接';
+                wsConnectBtn.disabled = true;
+                wsDisconnectBtn.disabled = false;
+                
+                // 订阅所有事件
+                const subscription = { type: 'subscribe', channels: ['all'] };
+                websocket.send(JSON.stringify(subscription));
+                logToWs(JSON.stringify(subscription, null, 2), 'OUT');
+            };
+
+            websocket.onmessage = (event) => {
+                try {
+                   const message = JSON.parse(event.data);
+                   logToWs(JSON.stringify(message, null, 2));
+                   if (message.type === 'trigger_burst_complete') {
+                       apiRequest('GET', '/api/trigger/list', null, renderTriggerList);
+                   }
+                } catch(e) {
+                    logToWs(event.data);
+                }
+            };
+
+            websocket.onclose = () => {
+                logToWs('WebSocket 已断开', 'SYS');
+                wsStatusDot.classList.remove('bg-green-500');
+                wsStatusDot.classList.add('bg-red-500');
+                wsStatusDot.title = 'WebSocket 已断开';
+                wsConnectBtn.disabled = false;
+                wsDisconnectBtn.disabled = true;
+                websocket = null;
+            };
+
+            websocket.onerror = (error) => {
+                logToWs(`WebSocket 错误: ${error.message || '未知错误'}`, 'SYS');
+                wsStatusDot.classList.remove('bg-green-500');
+                wsStatusDot.classList.add('bg-red-500');
+                wsStatusDot.title = 'WebSocket 错误';
+            };
+        });
+
+        wsDisconnectBtn.addEventListener('click', () => {
+            if (websocket) {
+                websocket.close();
+            }
+        });
+
+        // 刷新状态
+        document.getElementById('get-status-btn').addEventListener('click', () => {
+            apiRequest('GET', '/api/control/status');
+        });
+
+        // 配置数据流
+        function configureStream() {
+            try {
+                const payload = JSON.parse(document.getElementById('config-payload').value);
+                apiRequest('POST', '/api/control/configure', payload);
+            } catch (error) {
+                logToApi(`ERROR: 配置 JSON 格式错误: ${error.message}`);
+            }
+        }
+        
+        // 渲染触发批次列表
+        function renderTriggerList(bursts) {
+            if (!Array.isArray(bursts)) {
+                triggerListEl.innerHTML = `<div class="text-gray-500">无效的批次数据</div>`;
+                return;
+            }
+            if (bursts.length === 0) {
+                 triggerListEl.innerHTML = `<div class="text-gray-500">目前没有触发批次</div>`;
+                 return;
+            }
+            triggerListEl.innerHTML = bursts.map(burst => `
+                <div class="p-2 border dark:border-gray-600 rounded-md">
+                    <p class="text-sm font-mono truncate" title="${burst.burst_id}">${burst.burst_id}</p>
+                    <div class="flex items-center justify-between mt-2 text-xs text-gray-500 dark:text-gray-400">
+                        <span>${new Date(burst.created_at).toLocaleString()}</span>
+                        <span>${burst.total_samples} samples</span>
+                        <span class="font-semibold">${burst.quality}</span>
+                    </div>
+                    <div class="flex space-x-2 mt-2">
+                        <button class="btn btn-secondary text-xs py-1 px-2" onclick="apiRequest('GET', '/api/trigger/preview/${burst.burst_id}')">预览</button>
+                        <button class="btn btn-success text-xs py-1 px-2" onclick="saveTrigger('${burst.burst_id}')">保存</button>
+                        <button class="btn btn-danger text-xs py-1 px-2" onclick="deleteTrigger('${burst.burst_id}')">删除</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        // 保存触发批次
+        function saveTrigger(burstId) {
+            const filename = prompt("请输入文件名 (可选):", `burst_${burstId.substring(0,8)}_${Date.now()}`);
+            if (filename === null) return;
+            const payload = {
+                dir: "test_from_ui",
+                filename: filename,
+                format: "json",
+                description: "从 Web UI 测试界面保存"
+            };
+            apiRequest('POST', `/api/trigger/save/${burstId}`, payload);
+        }
+
+        // 删除触发批次
+        function deleteTrigger(burstId) {
+            if (confirm(`确定要删除批次 ${burstId} 吗？`)) {
+                apiRequest('DELETE', `/api/trigger/delete/${burstId}`, null, () => {
+                    // 成功后刷新列表
+                    apiRequest('GET', '/api/trigger/list', null, renderTriggerList);
+                });
+            }
+        }
+        
+        // 列出文件
+        function listFiles() {
+            const dir = document.getElementById('file-dir').value.trim();
+            const endpoint = dir ? `/api/files?dir=${encodeURIComponent(dir)}` : '/api/files';
+            apiRequest('GET', endpoint, null, renderFileList);
+        }
+
+        // 渲染文件列表
+        function renderFileList(files) {
+             if (!Array.isArray(files)) {
+                fileListEl.innerHTML = `<div class="text-gray-500">无效的文件数据</div>`;
+                return;
+            }
+            if (files.length === 0) {
+                 fileListEl.innerHTML = `<div class="text-gray-500">目录中没有文件</div>`;
+                 return;
+            }
+            fileListEl.innerHTML = files.map(file => `
+                <div class="p-2 border dark:border-gray-600 rounded-md flex justify-between items-center">
+                    <div>
+                        <p class="text-sm font-mono" title="${file.filename}">${file.filename}</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">${(file.size_bytes / 1024).toFixed(2)} KB</p>
+                    </div>
+                    <button class="btn btn-secondary text-xs py-1 px-2" onclick="downloadFile('${file.filename}')">下载</button>
+                </div>
+            `).join('');
+        }
+        
+        // 下载文件
+        function downloadFile(filename) {
+            const url = `${baseUrlInput.value}/api/files/${encodeURIComponent(filename)}`;
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename.split('/').pop();
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            logToApi(`发起下载请求: ${url}`);
+        }
+        
+        // 保存(上传)文件
+        function saveFile() {
+            const fileInput = document.getElementById('file-upload-input');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('请先选择一个文件');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const base64String = event.target.result.split(',')[1];
+                const dir = document.getElementById('file-dir').value.trim() || 'uploads';
+                const payload = {
+                    dir: dir,
+                    filename: file.name,
+                    base64: base64String
+                };
+                apiRequest('POST', '/api/files/save', payload, () => {
+                    // 成功后刷新文件列表
+                    listFiles();
+                });
+            };
+            reader.onerror = function(error) {
+                logToApi(`ERROR: 读取文件失败: ${error}`);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // 初始加载时获取一次状态
+        window.onload = () => {
+            apiRequest('GET', '/api/control/status');
+        };
+    </script>
+
+</body>
+</html>
+
