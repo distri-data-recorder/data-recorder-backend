@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据采集控制面板 (Modern)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        /* Using a more modern font stack */
+        body {
+            font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+        }
+
+        /* Custom scrollbar for a cleaner look */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #5a6b82;
+        }
+
+        /* Card styles with a subtle glassmorphism effect */
+        .card {
+            background-color: rgba(30, 41, 59, 0.6); /* bg-slate-800 with opacity */
+            backdrop-filter: blur(12px);
+            border: 1px solid rgb(51, 65, 85); /* border-slate-700 */
+            border-radius: 0.75rem; /* rounded-xl */
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            padding: 1.5rem; /* p-6 */
+        }
+        
+        /* Pulse animation for status dots */
+        .status-dot {
+            height: 10px;
+            width: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            animation: pulse 2s infinite ease-in-out;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(0.9); opacity: 0.7; }
+        }
+
+        /* Log panel styling */
+        .log-panel {
+            font-family: 'Fira Code', 'Courier New', Courier, monospace;
+            background-color: #0f172a; /* bg-slate-900 */
+            color: #94a3b8; /* text-slate-400 */
+            padding: 1rem;
+            border-radius: 0.5rem;
+            height: 200px;
+            overflow-y: auto;
+            font-size: 0.875rem;
+        }
+        .log-entry { white-space: pre-wrap; word-break: break-all; }
+        .log-entry.error { color: #f43f5e; } /* text-rose-500 */
+        .log-entry.success { color: #22c55e; } /* text-green-500 */
+        .log-entry.info { color: #60a5fa; } /* text-blue-400 */
+        .log-entry.ws { color: #f59e0b; } /* text-amber-500 */
+
+        /* Chart container height */
+        #realtimeChart { height: 450px; }
+        #triggerPreviewChart { height: 300px; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-300 antialiased p-4 lg:p-6">
+
+    <div class="max-w-screen-2xl mx-auto">
+        <header class="mb-6 text-center">
+            <h1 class="text-3xl lg:text-4xl font-bold text-white">数据采集系统控制面板</h1>
+            <p class="text-slate-400 mt-2">实时监控、控制与数据预览</p>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+
+            <div class="lg:col-span-2 flex flex-col gap-6">
+                <div class="card">
+                    <h2 class="text-xl font-semibold mb-4 text-white">系统状态</h2>
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center text-base">
+                            <span class="text-slate-400">设备连接</span>
+                            <span id="device-status" class="font-mono px-3 py-1 rounded-full text-sm font-semibold">---</span>
+                        </div>
+                        <div class="flex justify-between items-center text-base">
+                            <span class="text-slate-400">采集状态</span>
+                            <span id="collection-status" class="font-mono px-3 py-1 rounded-full text-sm font-semibold">---</span>
+                        </div>
+                        <div class="flex justify-between items-center text-base">
+                            <span class="text-slate-400">当前模式</span>
+                            <span id="current-mode" class="font-mono px-3 py-1 rounded-full text-sm font-semibold">---</span>
+                        </div>
+                        <div class="flex justify-between items-center text-base">
+                            <span class="text-slate-400">缓存触发数</span>
+                            <span id="cached-bursts" class="font-mono text-white font-semibold">---</span>
+                        </div>
+                        <div class="flex justify-between items-center text-base">
+                            <span class="text-slate-400">WS 连接数</span>
+                            <span id="ws-clients" class="font-mono text-white font-semibold">---</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2 class="text-xl font-semibold mb-4 text-white">操作控制</h2>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button id="btn-start" class="btn-primary col-span-1">启动采集</button>
+                        <button id="btn-stop" class="btn-destructive col-span-1">停止采集</button>
+                        <button id="btn-continuous" class="btn-secondary col-span-1">连续模式</button>
+                        <button id="btn-trigger" class="btn-secondary col-span-1">触发模式</button>
+                        <button id="btn-request-data" class="btn-secondary col-span-2">请求触发数据</button>
+                        <button id="btn-ping" class="btn-secondary col-span-2">Ping 设备</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-semibold text-white">文件管理</h2>
+                        <button id="btn-refresh-files" class="btn-secondary py-1 px-3 text-sm">刷新</button>
+                    </div>
+                    <ul id="file-list" class="h-48 overflow-y-auto space-y-2 pr-2">
+                        <li class="text-slate-500 text-center p-4">加载文件中...</li>
+                    </ul>
+                </div>
+
+                <div class="card flex-grow flex flex-col">
+                    <h2 class="text-xl font-semibold mb-4 text-white">日志输出</h2>
+                    <div id="log-panel" class="log-panel flex-grow"></div>
+                </div>
+            </div>
+
+            <div class="lg:col-span-3 flex flex-col gap-6">
+                <div class="card">
+                    <div class="flex justify-between items-center mb-4 flex-wrap gap-2">
+                        <h2 class="text-xl font-semibold text-white">实时数据流</h2>
+                        <div class="flex items-center space-x-2">
+                            <button id="btn-reset-yaxis" class="btn-chart-control">重置Y轴</button>
+                            <button id="btn-auto-scroll" class="btn-chart-control">自动跟随</button>
+                            <button id="btn-zoom-out" class="btn-chart-control">查看全部</button>
+                            <div class="flex items-center space-x-2 bg-slate-700/50 px-3 py-1 rounded-full">
+                               <span id="ws-status-dot" class="status-dot bg-slate-500"></span>
+                               <span id="ws-status-text" class="text-sm">未连接</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="realtimeChart"></div>
+                </div>
+                
+                <div class="card">
+                    <div class="flex justify-between items-center mb-4 flex-wrap gap-2">
+                        <h2 class="text-xl font-semibold text-white">触发数据管理</h2>
+                        <div class="flex items-center gap-2">
+                            <button id="btn-save-trigger" class="btn-primary" disabled>保存选中项</button>
+                            <button id="btn-refresh-triggers" class="btn-secondary">刷新列表</button>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="md:col-span-1 h-80 overflow-y-auto bg-slate-900/70 p-3 rounded-lg">
+                            <h3 class="text-lg font-semibold mb-3 text-slate-200 sticky top-0 bg-slate-900/70 pb-2">触发批次</h3>
+                            <ul id="trigger-list" class="space-y-2">
+                                <li class="text-slate-500 text-center p-4">点击刷新获取数据</li>
+                            </ul>
+                        </div>
+                        <div class="md:col-span-2">
+                             <div id="triggerPreviewChart"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="save-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+        <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-full max-w-md m-4">
+            <h3 class="text-xl font-semibold text-white mb-4">保存触发批次</h3>
+            <div class="space-y-4">
+                <div>
+                    <label for="save-filename" class="block text-sm font-medium text-slate-300 mb-1">文件名 (不含扩展名)</label>
+                    <input type="text" id="save-filename" class="w-full bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-white focus:ring-2 focus:ring-cyan-500 focus:outline-none">
+                </div>
+                <div>
+                    <label for="save-format" class="block text-sm font-medium text-slate-300 mb-1">保存格式</label>
+                    <select id="save-format" class="w-full bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-white focus:ring-2 focus:ring-cyan-500 focus:outline-none">
+                        <option value="json">JSON</option>
+                        <option value="csv">CSV</option>
+                        <option value="binary">Binary</option>
+                    </select>
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end gap-3">
+                <button id="btn-cancel-save" class="btn-secondary">取消</button>
+                <button id="btn-confirm-save" class="btn-primary">确认保存</button>
+            </div>
+        </div>
+    </div>
+
+
+<script>
+// Tailwind CSS class definitions for dynamic button styling
+const buttonClasses = {
+  base: 'font-bold py-2 px-4 rounded-lg transition-all duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed',
+  primary: 'bg-cyan-500 hover:bg-cyan-600 text-white focus:ring-cyan-400',
+  destructive: 'bg-rose-600 hover:bg-rose-700 text-white focus:ring-rose-500',
+  secondary: 'bg-slate-700 hover:bg-slate-600 text-slate-200 focus:ring-slate-500',
+  chartControl: 'bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold py-1 px-3 rounded-md transition duration-200 text-sm focus:outline-none focus:ring-2 focus:ring-slate-500'
+};
+
+function applyButtonStyles() {
+    document.querySelectorAll('.btn-primary').forEach(el => el.className += ` ${buttonClasses.base} ${buttonClasses.primary}`);
+    document.querySelectorAll('.btn-destructive').forEach(el => el.className += ` ${buttonClasses.base} ${buttonClasses.destructive}`);
+    document.querySelectorAll('.btn-secondary').forEach(el => el.className += ` ${buttonClasses.base} ${buttonClasses.secondary}`);
+    document.querySelectorAll('.btn-chart-control').forEach(el => el.className = el.className + ' ' + buttonClasses.chartControl);
+}
+
+
+document.addEventListener('DOMContentLoaded', function() {
+    applyButtonStyles();
+    const API_BASE_URL = 'http://127.0.0.1:8080';
+    const WS_URL = 'ws://127.0.0.1:8081';
+    const STATUS_POLL_INTERVAL = 2000;
+    const CHART_MAX_POINTS = 10000;
+    const CHART_DISPLAY_POINTS = 1000;
+    const DOWNSAMPLE_THRESHOLD = 2000;
+    const CHANNEL_COLORS = ['#22d3ee', '#f43f5e', '#4ade80', '#facc15', '#a78bfa', '#fb923c'];
+    
+    let ws;
+    let realtimeChart;
+    let triggerPreviewChart;
+    let channelDataArrays = {};
+    let channelCount = 0;
+    let sampleIndex = 0;
+    let lastUpdateTime = 0;
+    const UPDATE_INTERVAL = 100;
+    let yAxisRange = { min: null, max: null };
+    let isAutoScroll = true;
+    let selectedBurstId = null; // ** NEW: To store the selected trigger ID **
+
+    // Element Cache
+    const logPanel = document.getElementById('log-panel');
+    const deviceStatusEl = document.getElementById('device-status');
+    const collectionStatusEl = document.getElementById('collection-status');
+    const currentModeEl = document.getElementById('current-mode');
+    const cachedBurstsEl = document.getElementById('cached-bursts');
+    const wsClientsEl = document.getElementById('ws-clients');
+    const wsStatusDot = document.getElementById('ws-status-dot');
+    const wsStatusText = document.getElementById('ws-status-text');
+    const triggerListEl = document.getElementById('trigger-list');
+    const fileListEl = document.getElementById('file-list'); // ** NEW **
+    const btnStart = document.getElementById('btn-start');
+    const btnStop = document.getElementById('btn-stop');
+    const btnRequestData = document.getElementById('btn-request-data');
+    const btnSaveTrigger = document.getElementById('btn-save-trigger'); // ** NEW **
+    const saveModal = document.getElementById('save-modal'); // ** NEW **
+
+    // ... all other existing functions (log, apiRequest, initCharts, etc.) remain the same ...
+    // Paste the full JS code from the previous step here, and then add/modify the functions below.
+    // For brevity, I will only show the NEW and MODIFIED functions.
+
+    function log(message, type = 'info') {
+        const entry = document.createElement('div');
+        entry.classList.add('log-entry', type);
+        const timestamp = new Date().toLocaleTimeString('en-GB');
+        entry.textContent = `[${timestamp}] ${message}`;
+        logPanel.appendChild(entry);
+        logPanel.scrollTop = logPanel.scrollHeight;
+    }
+
+    async function apiRequest(endpoint, method = 'GET', body = null) {
+        const url = API_BASE_URL + endpoint;
+        const options = { method, headers: { 'Content-Type': 'application/json' } };
+        if (body) options.body = JSON.stringify(body);
+        try {
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                 const errorText = await response.text();
+                 throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+            }
+            // Handle responses that might not have content (like downloads)
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.indexOf("application/json") !== -1) {
+                const data = await response.json();
+                if (data.success) {
+                    log(`API ${method} ${endpoint}: ${typeof data.data === 'string' ? data.data : 'Success'}`, 'success');
+                } else {
+                    log(`API ${method} ${endpoint} FAILED: ${data.error}`, 'error');
+                }
+                return data;
+            } else {
+                return { success: true, data: 'Non-JSON response received.' };
+            }
+        } catch (error) {
+            log(`API Request Error: ${error.message}`, 'error');
+            return null;
+        }
+    }
+    
+    // ** NEW FUNCTION: Fetch and render the list of saved files **
+    async function fetchFileList() {
+        const result = await apiRequest('/api/files?dir=test_output');
+        fileListEl.innerHTML = '';
+        if (result && result.success && Array.isArray(result.data)) {
+            if (result.data.length === 0) {
+                fileListEl.innerHTML = '<li class="text-slate-500 text-center p-4">无已存文件</li>';
+                return;
+            }
+            result.data.forEach(file => {
+                const li = document.createElement('li');
+                li.className = 'flex justify-between items-center bg-slate-800/50 p-2 rounded-md';
+                const fileSize = (file.size_bytes / 1024).toFixed(2);
+                li.innerHTML = `
+                    <div class="truncate pr-2">
+                        <span class="text-slate-300 text-sm font-medium">${file.filename}</span>
+                        <span class="text-slate-500 text-xs block">${fileSize} KB</span>
+                    </div>
+                    <button data-filename="${file.filename}" class="btn-download flex-shrink-0 bg-cyan-600 hover:bg-cyan-700 text-white text-xs font-bold py-1 px-2 rounded">下载</button>
+                `;
+                fileListEl.appendChild(li);
+            });
+            // Add event listeners to the new download buttons
+            document.querySelectorAll('.btn-download').forEach(button => {
+                button.addEventListener('click', handleDownload);
+            });
+        } else {
+            fileListEl.innerHTML = '<li class="text-slate-500 text-center p-4">无法加载文件列表</li>';
+        }
+    }
+
+    // ** NEW FUNCTION: Handle file download logic **
+    function handleDownload(event) {
+        const filename = event.target.dataset.filename;
+        if (!filename) return;
+
+        log(`开始下载文件: ${filename}`, 'info');
+        const encodedFilename = encodeURIComponent(filename);
+        const url = `${API_BASE_URL}/api/files/${encodedFilename}`;
+        
+        const link = document.createElement('a');
+        link.href = url;
+        // Extract the base name of the file for the download attribute
+        link.setAttribute('download', filename.split('/').pop()); 
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+    
+    // ** MODIFIED FUNCTION: fetchTriggerList to handle selection state **
+    async function fetchTriggerList() {
+        const result = await apiRequest('/api/trigger/list');
+        triggerListEl.innerHTML = '';
+        selectedBurstId = null; // Reset selection
+        btnSaveTrigger.disabled = true; // Disable save button
+
+        if (result && result.success && result.data.length > 0) {
+            result.data.forEach(burst => {
+                const li = document.createElement('li');
+                li.className = 'p-3 bg-slate-800/60 rounded-md hover:bg-slate-700/80 cursor-pointer transition-colors duration-200 border border-transparent';
+                li.dataset.burstId = burst.burst_id;
+                li.innerHTML = `<div class="font-semibold text-sm text-cyan-400">${burst.burst_id.replace('trigger_', '')}</div>
+                                <div class="text-xs text-slate-400 mt-1">样本: ${burst.total_samples} | ${burst.duration_ms.toFixed(1)}ms</div>`;
+                li.onclick = () => {
+                    triggerListEl.querySelectorAll('li').forEach(item => {
+                        item.classList.remove('bg-cyan-500/20', 'border-cyan-500');
+                    });
+                    li.classList.add('bg-cyan-500/20', 'border-cyan-500');
+                    
+                    selectedBurstId = burst.burst_id; // Store selected ID
+                    btnSaveTrigger.disabled = false; // Enable save button
+                    
+                    previewTriggerData(burst.burst_id);
+                };
+                triggerListEl.appendChild(li);
+            });
+        } else {
+            triggerListEl.innerHTML = '<li class="text-slate-500 text-center p-4">无可用触发数据</li>';
+        }
+    }
+    
+    // ** NEW FUNCTION: Handle save modal logic **
+    function setupModal() {
+        const btnConfirmSave = document.getElementById('btn-confirm-save');
+        const btnCancelSave = document.getElementById('btn-cancel-save');
+        const filenameInput = document.getElementById('save-filename');
+
+        btnSaveTrigger.addEventListener('click', () => {
+            if (!selectedBurstId) return;
+            // Pre-fill filename based on burst ID
+            const defaultFilename = selectedBurstId.replace('trigger_', `burst_${new Date().toISOString().split('T')[0]}_`);
+            filenameInput.value = defaultFilename;
+            saveModal.classList.remove('hidden');
+        });
+
+        const closeModal = () => saveModal.classList.add('hidden');
+        btnCancelSave.addEventListener('click', closeModal);
+        saveModal.addEventListener('click', (e) => {
+            if (e.target === saveModal) closeModal();
+        });
+
+        btnConfirmSave.addEventListener('click', async () => {
+            const filename = filenameInput.value.trim();
+            const format = document.getElementById('save-format').value;
+
+            if (!filename) {
+                log('文件名不能为空', 'error');
+                return;
+            }
+
+            const saveData = {
+                dir: "test_output", // As seen in the python script
+                filename: filename,
+                format: format,
+                description: "Saved from web dashboard"
+            };
+            
+            log(`正在保存批次 ${selectedBurstId} 为 ${filename}.${format}...`, 'info');
+            const result = await apiRequest(`/api/trigger/save/${selectedBurstId}`, 'POST', saveData);
+            if (result && result.success) {
+                log(`文件已成功保存: ${result.data.saved_path}`, 'success');
+                closeModal();
+                fetchFileList(); // Refresh the file list automatically
+            } else {
+                log(`保存失败: ${result ? result.error : 'Unknown error'}`, 'error');
+            }
+        });
+    }
+
+    // ** MODIFIED FUNCTION: init() to include new setups **
+    function init() {
+        log('Initializing Modern Dashboard...', 'info');
+        // ... (all existing init calls)
+        initCharts();
+        setupEventListeners();
+        connectWebSocket();
+        pollStatus();
+        setInterval(pollStatus, STATUS_POLL_INTERVAL);
+        fetchTriggerList();
+        updateAutoScrollButton();
+
+        // ** NEW setups **
+        fetchFileList(); 
+        setupModal(); 
+    }
+
+    // ** MODIFIED FUNCTION: setupEventListeners to include new buttons **
+    function setupEventListeners() {
+        // ... (all existing event listeners)
+        document.getElementById('btn-start').addEventListener('click', () => apiRequest('/api/control/start', 'POST'));
+        document.getElementById('btn-stop').addEventListener('click', () => apiRequest('/api/control/stop', 'POST'));
+        document.getElementById('btn-continuous').addEventListener('click', () => apiRequest('/api/control/continuous_mode', 'POST'));
+        document.getElementById('btn-trigger').addEventListener('click', () => apiRequest('/api/control/trigger_mode', 'POST'));
+        document.getElementById('btn-request-data').addEventListener('click', () => apiRequest('/api/control/request_trigger_data', 'POST'));
+        document.getElementById('btn-ping').addEventListener('click', () => apiRequest('/api/control/ping', 'POST'));
+        document.getElementById('btn-refresh-triggers').addEventListener('click', fetchTriggerList);
+        document.getElementById('btn-reset-yaxis').addEventListener('click', resetYAxisRange);
+        document.getElementById('btn-auto-scroll').addEventListener('click', toggleAutoScroll);
+        document.getElementById('btn-zoom-out').addEventListener('click', zoomToFullView);
+
+        // ** NEW listener **
+        document.getElementById('btn-refresh-files').addEventListener('click', fetchFileList);
+    }
+
+    function initCharts() {
+        realtimeChart = echarts.init(document.getElementById('realtimeChart'), 'dark');
+        triggerPreviewChart = echarts.init(document.getElementById('triggerPreviewChart'), 'dark');
+
+        const baseChartOption = {
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis' },
+            legend: { textStyle: { color: '#e2e8f0' }, top: 5 },
+            grid: { left: 60, right: 20, bottom: 80, top: 70, containLabel: false },
+            xAxis: {
+                type: 'category', boundaryGap: false, data: [],
+                axisLabel: { color: '#94a3b8' },
+                nameTextStyle: { color: '#94a3b8' }
+            },
+            yAxis: {
+                type: 'value',
+                axisLabel: { color: '#94a3b8' },
+                splitLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.5)' } },
+                nameTextStyle: { color: '#94a3b8' }
+            },
+            series: []
+        };
+        
+        const realtimeOption = {
+            ...baseChartOption,
+            xAxis: {...baseChartOption.xAxis, name: '样本索引' },
+            yAxis: {...baseChartOption.yAxis, name: '数值', scale: true },
+            toolbox: {
+                show: true, right: 20, top: 0, feature: {
+                    dataZoom: { yAxisIndex: 'none', title: { zoom: '区域缩放', back: '还原' } },
+                    restore: { title: '还原' }, saveAsImage: { title: '保存图片' }
+                }, iconStyle: { borderColor: '#cbd5e1' }
+            },
+            // ** MODIFICATION START: Set initial zoom, but it will be managed later **
+            dataZoom: [
+                { type: 'inside', start: 80, end: 100 },
+                { type: 'slider', start: 80, end: 100, height: 25, bottom: 15, textStyle: { color: '#94a3b8' } }
+            ]
+            // ** MODIFICATION END **
+        };
+
+        realtimeChart.setOption(realtimeOption);
+        triggerPreviewChart.setOption({
+            ...baseChartOption,
+             grid: { left: 60, right: 20, bottom: 40, top: 20, containLabel: false },
+             title: { text: '请从左侧选择一个触发批次', left: 'center', top: '45%', textStyle: { color: '#64748b' } }
+        });
+
+        // ** MODIFICATION START: Add event listener to detect user zoom **
+        realtimeChart.on('dataZoom', function () {
+            // When the user manually zooms or pans the chart, disable auto-scroll.
+            if (isAutoScroll) {
+                log('手动缩放/平移已激活，自动跟随已禁用。', 'info');
+            }
+            isAutoScroll = false;
+            updateAutoScrollButton();
+        });
+        // ** MODIFICATION END **
+
+        window.addEventListener('resize', () => {
+            realtimeChart.resize();
+            triggerPreviewChart.resize();
+        });
+    }
+
+    function downsampleData(data, xData, targetPoints) {
+        if (data.length <= targetPoints) {
+            return { data: data, xData: xData };
+        }
+
+        const sampledData = [];
+        const sampledXData = [];
+        const bucketSize = data.length / targetPoints;
+
+        for (let i = 0; i < targetPoints; i++) {
+            const bucketStart = Math.floor(i * bucketSize);
+            const bucketEnd = Math.floor((i + 1) * bucketSize);
+            
+            if (bucketStart >= data.length) break;
+            
+            const bucket = data.slice(bucketStart, bucketEnd);
+            const xBucket = xData.slice(bucketStart, bucketEnd);
+            
+            if (bucket.length === 1) {
+                sampledData.push(bucket[0]);
+                sampledXData.push(xBucket[0]);
+            } else if (bucket.length > 1) {
+                const min = Math.min(...bucket);
+                const max = Math.max(...bucket);
+                const avg = bucket.reduce((a, b) => a + b, 0) / bucket.length;
+                
+                const range = max - min;
+                const threshold = 0.01;
+                
+                if (range > threshold) {
+                    const minIndex = bucket.indexOf(min);
+                    const maxIndex = bucket.indexOf(max);
+                    
+                    if (minIndex < maxIndex) {
+                        sampledData.push(min, max);
+                        sampledXData.push(xBucket[minIndex], xBucket[maxIndex]);
+                    } else {
+                        sampledData.push(max, min);
+                        sampledXData.push(xBucket[maxIndex], xBucket[minIndex]);
+                    }
+                } else {
+                    sampledData.push(avg);
+                    sampledXData.push(xBucket[Math.floor(bucket.length / 2)]);
+                }
+            }
+        }
+        return { data: sampledData, xData: sampledXData };
+    }
+
+    function calculateYAxisRange(displayData) {
+        let allValues = [];
+        const dataSets = displayData || Object.values(channelDataArrays).map(arr => arr.data);
+        dataSets.forEach(seriesData => {
+            if (seriesData && seriesData.length > 0) {
+                allValues.push(...seriesData);
+            }
+        });
+        
+        if (allValues.length === 0) return;
+        
+        const min = Math.min(...allValues);
+        const max = Math.max(...allValues);
+        const range = max - min;
+        
+        const buffer = range > 0 ? range * 0.1 : Math.abs(max) * 0.1 || 1;
+        yAxisRange.min = min - buffer;
+        yAxisRange.max = max + buffer;
+    }
+    
+    function initializeChannelData(numChannels) {
+        if (channelCount === numChannels) return;
+        channelCount = numChannels;
+        channelDataArrays = {};
+        for (let i = 0; i < numChannels; i++) {
+            channelDataArrays[i] = { data: [], xAxisData: [] };
+        }
+        updateChartSeries();
+        log(`Initialized for ${numChannels} data channels`, 'info');
+    }
+    
+    // ** MODIFICATION START: Simplified and corrected update logic **
+    function updateChartSeries() {
+        if (channelCount === 0) return;
+
+        const legendData = [];
+        const seriesData = [];
+        let finalXAxisData;
+
+        for (let i = 0; i < channelCount; i++) {
+            const channelName = `通道 ${i}`;
+            legendData.push(channelName);
+            
+            let { data, xAxisData } = channelDataArrays[i];
+            
+            // Note: Downsampling is good for performance but can affect zoomed-in view.
+            // For this implementation, we will keep it.
+            if (data.length > DOWNSAMPLE_THRESHOLD) {
+                const sampled = downsampleData(data, xAxisData, CHART_DISPLAY_POINTS);
+                data = sampled.data;
+                xAxisData = sampled.xData;
+            }
+            
+            if (i === 0) finalXAxisData = xAxisData;
+            
+            seriesData.push({
+                name: channelName, type: 'line', data: data, showSymbol: false,
+                lineStyle: { color: CHANNEL_COLORS[i % CHANNEL_COLORS.length], width: 1.5 },
+                animation: false
+            });
+        }
+        
+        calculateYAxisRange();
+
+        const updateOption = {
+            legend: { data: legendData },
+            xAxis: { data: finalXAxisData },
+            yAxis: { min: yAxisRange.min, max: yAxisRange.max },
+            series: seriesData
+        };
+
+        if (isAutoScroll) {
+            const totalPoints = finalXAxisData.length;
+            const newStart = Math.max(0, 100 * (totalPoints - CHART_DISPLAY_POINTS) / totalPoints);
+            updateOption.dataZoom = [
+                { start: newStart, end: 100 },
+                { start: newStart, end: 100 }
+            ];
+        }
+
+        // Use default merge behavior by removing `notMerge: true`.
+        // This is the key to preserving zoom when `isAutoScroll` is false.
+        realtimeChart.setOption(updateOption, { lazyUpdate: true });
+    }
+    // ** MODIFICATION END **
+
+    function addDataPoint(data, samplesPerChannel) {
+        if (channelCount === 0 || !data || data.length === 0) return;
+        const expectedLength = channelCount * samplesPerChannel;
+        if (data.length !== expectedLength) {
+            log(`Data length mismatch: expected ${expectedLength}, got ${data.length}`, 'error');
+            return;
+        }
+
+        for (let ch = 0; ch < channelCount; ch++) {
+            for (let s = 0; s < samplesPerChannel; s++) {
+                const value = data[ch * samplesPerChannel + s];
+                const globalIndex = sampleIndex + s;
+                channelDataArrays[ch].data.push(value);
+                channelDataArrays[ch].xAxisData.push(globalIndex);
+
+                if (channelDataArrays[ch].data.length > CHART_MAX_POINTS) {
+                    const removeCount = Math.floor(CHART_MAX_POINTS * 0.1);
+                    channelDataArrays[ch].data.splice(0, removeCount);
+                    channelDataArrays[ch].xAxisData.splice(0, removeCount);
+                }
+            }
+        }
+        sampleIndex += samplesPerChannel;
+    }
+
+    function updateAutoScrollButton() {
+        const btn = document.getElementById('btn-auto-scroll');
+        if (isAutoScroll) {
+            btn.textContent = '停止跟随';
+            btn.classList.remove('bg-slate-700', 'hover:bg-slate-600');
+            btn.classList.add('bg-cyan-600', 'text-white');
+        } else {
+            btn.textContent = '自动跟随';
+            btn.classList.remove('bg-cyan-600', 'text-white');
+            btn.classList.add('bg-slate-700', 'hover:bg-slate-600');
+        }
+    }
+    
+    // ** MODIFICATION START: Simplified toggle logic **
+    function toggleAutoScroll() {
+        isAutoScroll = !isAutoScroll;
+        log(`自动跟随已 ${isAutoScroll ? '启用' : '禁用'}`, 'info');
+        updateAutoScrollButton();
+        
+        // If we are re-enabling auto-scroll, immediately update the view to the latest data.
+        if (isAutoScroll) {
+            updateChartSeries();
+        }
+    }
+    // ** MODIFICATION END **
+
+    function zoomToFullView() {
+        isAutoScroll = false;
+        updateAutoScrollButton();
+        // Dispatch an action to set the zoom. This will be preserved until auto-scroll is re-enabled.
+        realtimeChart.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
+        log('已切换到完整视图', 'info');
+    }
+
+    function resetYAxisRange() {
+        yAxisRange = { min: null, max: null };
+        calculateYAxisRange();
+        realtimeChart.setOption({ yAxis: { min: yAxisRange.min, max: yAxisRange.max } });
+        log('Y轴范围已重置', 'info');
+    }
+
+    function connectWebSocket() {
+        ws = new WebSocket(WS_URL);
+        ws.onopen = () => {
+            log('WebSocket connection established', 'ws');
+            wsStatusDot.className = 'status-dot bg-green-500';
+            wsStatusText.textContent = '已连接';
+            ws.send(JSON.stringify({ type: 'subscribe', channels: ['all'] }));
+        };
+        ws.onmessage = event => {
+            const msg = JSON.parse(event.data);
+            switch (msg.type) {
+                case 'data':
+                    if (msg.data && msg.channel_count > 0) {
+                        if (channelCount !== msg.channel_count) {
+                            initializeChannelData(msg.channel_count);
+                        }
+                        const samplesPerChannel = Math.floor(msg.data.length / msg.channel_count);
+                        if (samplesPerChannel > 0) {
+                            addDataPoint(msg.data, samplesPerChannel);
+                            if (Date.now() - lastUpdateTime > UPDATE_INTERVAL) {
+                                // This function will now respect the user's zoom state
+                                updateChartSeries();
+                                lastUpdateTime = Date.now();
+                            }
+                        }
+                    }
+                    break;
+                case 'trigger_burst_complete':
+                    log(`Trigger burst complete: ${msg.burst_id}`, 'ws');
+                    fetchTriggerList();
+                    break;
+                case 'trigger_event':
+                    log(`Trigger event on channel ${msg.channel}`, 'ws');
+                    break;
+                case 'welcome':
+                    log(`WebSocket welcome, client ID: ${msg.client_id}`, 'ws');
+                    break;
+                case 'subscription_updated':
+                    log('WebSocket subscription updated', 'ws');
+                    break;
+            }
+        };
+        ws.onclose = () => {
+            log('WebSocket closed. Reconnecting in 5s...', 'error');
+            wsStatusDot.className = 'status-dot bg-red-500';
+            wsStatusText.textContent = '已断开';
+            setTimeout(connectWebSocket, 5000);
+        };
+        ws.onerror = error => {
+            log('WebSocket error', 'error');
+            ws.close();
+        };
+    }
+    
+    function updateStatusUI(statusData) {
+        function updateStatusPill(el, text, colorClass) {
+            el.textContent = text;
+            el.className = `font-mono px-3 py-1 rounded-full text-sm font-semibold ${colorClass}`;
+        }
+        
+        updateStatusPill(deviceStatusEl, statusData.device_connected ? '已连接' : '未连接', 
+            statusData.device_connected ? 'bg-green-500/20 text-green-400' : 'bg-rose-500/20 text-rose-400');
+        updateStatusPill(collectionStatusEl, statusData.data_collection_active ? '采集中' : '已停止', 
+            statusData.data_collection_active ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-500/20 text-slate-400');
+        updateStatusPill(currentModeEl, statusData.current_mode === 'trigger' ? '触发模式' : '连续模式', 
+            statusData.current_mode === 'trigger' ? 'bg-amber-500/20 text-amber-400' : 'bg-sky-500/20 text-sky-400');
+        
+        cachedBurstsEl.textContent = statusData.trigger_status ? statusData.trigger_status.cached_bursts : 'N/A';
+        wsClientsEl.textContent = statusData.connected_clients || 'N/A';
+        
+        btnStart.disabled = statusData.data_collection_active;
+        btnStop.disabled = !statusData.data_collection_active;
+        btnRequestData.disabled = statusData.current_mode !== 'trigger';
+    }
+
+    async function pollStatus() {
+        const result = await apiRequest('/api/control/status');
+        if (result && result.success) updateStatusUI(result.data);
+    }
+
+    async function previewTriggerData(burstId) {
+        log(`Previewing trigger data: ${burstId}`, 'info');
+        const result = await apiRequest(`/api/trigger/preview/${burstId}`);
+        if (result && result.success) renderTriggerPreview(result.data);
+    }
+
+    function renderTriggerPreview(burstData) {
+        if (!burstData.data_packets || burstData.data_packets.length === 0) {
+             triggerPreviewChart.setOption({
+                title: { text: '无数据可显示', left: 'center', top: '45%', textStyle: { color: '#64748b' } }
+            }, true);
+            return;
+        }
+
+        const channelData = {};
+        burstData.data_packets.forEach(packet => {
+            const samplesPerChannel = Math.floor(packet.data.length / packet.channel_count);
+            for (let ch = 0; ch < packet.channel_count; ch++) {
+                if (!channelData[ch]) channelData[ch] = [];
+                const start = ch * samplesPerChannel;
+                const end = start + samplesPerChannel;
+                channelData[ch].push(...packet.data.slice(start, end));
+            }
+        });
+
+        const seriesData = Object.keys(channelData).map((chIndex, i) => ({
+            name: `通道 ${chIndex}`, type: 'line', data: channelData[chIndex],
+            showSymbol: false, lineStyle: { color: CHANNEL_COLORS[i % CHANNEL_COLORS.length], width: 1.5 }
+        }));
+        
+        const xAxisData = Array.from({ length: Math.max(...Object.values(channelData).map(d => d.length)) }, (_, i) => i);
+        
+        // ** MODIFICATION: Add dataZoom to trigger preview chart as well **
+        triggerPreviewChart.setOption({
+            title: { text: '' },
+            tooltip: { trigger: 'axis' },
+            legend: {
+                data: Object.keys(channelData).map(ch => `通道 ${ch}`),
+                textStyle: { color: '#e2e8f0' }, top: 0, right: 10, orient: 'horizontal'
+            },
+            xAxis: { type: 'category', data: xAxisData, name: '样本索引' },
+            yAxis: { type: 'value', name: '数值', scale: true },
+            dataZoom: [ { type: 'inside' }, { type: 'slider', height: 20, bottom: 5 } ],
+            series: seriesData
+        }, true);
+    }
+
+
+    init();
+});
+</script>
+
+</body>
+</html>
+```
