@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据采集系统控制台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .sidebar {
+            transition: transform 0.3s ease-in-out;
+        }
+        .sidebar-hidden {
+            transform: translateX(-100%);
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <!-- 导航栏 -->
+    <nav class="bg-blue-600 text-white p-4 shadow-md">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold">数据采集系统控制台</h1>
+            <button id="toggleSidebar" class="md:hidden focus:outline-none">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                </svg>
+            </button>
+        </div>
+    </nav>
+
+    <div class="flex">
+        <!-- 侧边栏 -->
+        <aside id="sidebar" class="sidebar w-64 bg-white shadow-md h-screen fixed md:static md:block">
+            <div class="p-4">
+                <h2 class="text-lg font-semibold mb-4">控制面板</h2>
+                <ul class="space-y-2">
+                    <li><button id="getStatus" class="w-full text-left p-2 hover:bg-blue-100 rounded">获取系统状态</button></li>
+                    <li><button id="startCollection" class="w-full text-left p-2 hover:bg-blue-100 rounded">启动采集</button></li>
+                    <li><button id="stopCollection" class="w-full text-left p-2 hover:bg-blue-100 rounded">停止采集</button></li>
+                    <li><button id="pingDevice" class="w-full text-left p-2 hover:bg-blue-100 rounded">设备Ping测试</button></li>
+                    <li><button id="getDeviceInfo" class="w-full text-left p-2 hover:bg-blue-100 rounded">获取设备信息</button></li>
+                    <li><button id="setContinuousMode" class="w-full text-left p-2 hover:bg-blue-100 rounded">连续模式</button></li>
+                    <li><button id="setTriggerMode" class="w-full text-left p-2 hover:bg-blue-100 rounded">触发模式</button></li>
+                    <li><button id="requestTriggerData" class="w-full text-left p-2 hover:bg-blue-100 rounded">请求触发数据</button></li>
+                    <li><button id="listTriggers" class="w-full text-left p-2 hover:bg-blue-100 rounded">触发批次列表</button></li>
+                    <li><button id="listFiles" class="w-full text-left p-2 hover:bg-blue-100 rounded">文件列表</button></li>
+                    <li><button id="healthCheck" class="w-full text-left p-2 hover:bg-blue-100 rounded">健康检查</button></li>
+                </ul>
+            </div>
+        </aside>
+
+        <!-- 主内容区域 -->
+        <main class="flex-1 p-6">
+            <div class="container mx-auto">
+                <!-- 系统状态 -->
+                <section class="bg-white p-6 rounded-lg shadow-md mb-6">
+                    <h2 class="text-xl font-semibold mb-4">系统状态</h2>
+                    <div id="systemStatus" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <p class="text-gray-600">点击“获取系统状态”查看详情</p>
+                    </div>
+                </section>
+
+                <!-- 实时数据图表 -->
+                <section class="bg-white p-6 rounded-lg shadow-md mb-6">
+                    <h2 class="text-xl font-semibold mb-4">实时数据流</h2>
+                    <canvas id="dataChart"></canvas>
+                </section>
+
+                <!-- 触发批次列表 -->
+                <section class="bg-white p-6 rounded-lg shadow-md">
+                    <h2 class="text-xl font-semibold mb-4">触发批次</h2>
+                    <div id="triggerList" class="space-y-4">
+                        <p class="text-gray-600">点击“触发批次列表”查看数据</p>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // API 和 WebSocket 配置
+        const API_BASE_URL = 'http://127.0.0.1:8080';
+        const WS_URL = 'ws://127.0.0.1:8081';
+
+        // WebSocket 连接
+        let ws = new WebSocket(WS_URL);
+        ws.onopen = () => {
+            console.log('WebSocket连接已建立');
+            ws.send(JSON.stringify({ type: 'subscribe', channels: ['all'] }));
+        };
+
+        // 图表初始化
+        const ctx = document.getElementById('dataChart').getContext('2d');
+        const dataChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: '实时数据',
+                    data: [],
+                    borderColor: '#2563eb',
+                    fill: false,
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: { display: true, title: { display: true, text: '时间' } },
+                    y: { display: true, title: { display: true, text: '值' } }
+                }
+            }
+        });
+
+        // WebSocket 消息处理
+        ws.onmessage = (event) => {
+            const message = JSON.parse(event.data);
+            switch (message.type) {
+                case 'welcome':
+                    console.log('欢迎消息:', message.client_id);
+                    break;
+                case 'data':
+                    updateChart(message.data);
+                    break;
+                case 'trigger_event':
+                    alert(`触发事件: 通道 ${message.channel}, 时间 ${new Date(message.event_time).toLocaleString()}`);
+                    break;
+                case 'trigger_burst_complete':
+                    refreshTriggerList();
+                    break;
+            }
+        };
+
+        ws.onclose = () => {
+            console.log('WebSocket连接断开，尝试重连...');
+            setTimeout(() => {
+                ws = new WebSocket(WS_URL);
+            }, 5000);
+        };
+
+        // 更新图表
+        function updateChart(data) {
+            const timestamp = new Date().toLocaleTimeString();
+            dataChart.data.labels.push(timestamp);
+            dataChart.data.datasets[0].data.push(data[0] || 0);
+            if (dataChart.data.labels.length > 50) {
+                dataChart.data.labels.shift();
+                dataChart.data.datasets[0].data.shift();
+            }
+            dataChart.update();
+        }
+
+        // API 调用函数
+        async function apiRequest(endpoint, method = 'GET', body = null) {
+            try {
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: body ? JSON.stringify(body) : null
+                });
+                const result = await response.json();
+                if (!result.success) throw new Error(result.error);
+                return result;
+            } catch (error) {
+                alert(`错误: ${error.message}`);
+                throw error;
+            }
+        }
+
+        // 系统状态更新
+        async function updateSystemStatus() {
+            const result = await apiRequest('/api/control/status');
+            const status = result.data;
+            document.getElementById('systemStatus').innerHTML = `
+                <div class="p-4 bg-gray-50 rounded">
+                    <p><strong>采集状态:</strong> ${status.data_collection_active ? '运行中' : '已停止'}</p>
+                    <p><strong>设备连接:</strong> ${status.device_connected ? '已连接' : '未连接'}</p>
+                    <p><strong>客户端数量:</strong> ${status.connected_clients}</p>
+                    <p><strong>处理数据包:</strong> ${status.packets_processed}</p>
+                    <p><strong>运行时间:</strong> ${status.uptime_seconds}秒</p>
+                    <p><strong>内存使用:</strong> ${status.memory_usage_mb}MB</p>
+                    <p><strong>连接类型:</strong> ${status.connection_type}</p>
+                    <p><strong>当前模式:</strong> ${status.current_mode}</p>
+                </div>
+            `;
+        }
+
+        // 触发批次列表更新
+        async function refreshTriggerList() {
+            const result = await apiRequest('/api/trigger/list');
+            const triggers = result.data;
+            document.getElementById('triggerList').innerHTML = triggers.map(t => `
+                <div class="p-4 bg-gray-50 rounded flex justify-between items-center">
+                    <div>
+                        <p><strong>批次ID:</strong> ${t.burst_id}</p>
+                        <p><strong>触发时间:</strong> ${new Date(t.trigger_timestamp * 1000).toLocaleString()}</p>
+                        <p><strong>通道:</strong> ${t.trigger_channel}</p>
+                        <p><strong>样本数:</strong> ${t.total_samples}</p>
+                        <p><strong>质量:</strong> ${t.quality}</p>
+                    </div>
+                    <div>
+                        <button onclick="previewTrigger('${t.burst_id}')" class="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">预览</button>
+                        <button onclick="saveTrigger('${t.burst_id}')" class="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600">保存</button>
+                        <button onclick="deleteTrigger('${t.burst_id}')" class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">删除</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 触发批次操作
+        async function previewTrigger(burstId) {
+            const result = await apiRequest(`/api/trigger/preview/${burstId}`);
+            alert(`预览批次 ${burstId}: ${JSON.stringify(result.data, null, 2)}`);
+        }
+
+        async function saveTrigger(burstId) {
+            const options = {
+                dir: 'experiments',
+                filename: `trigger_${burstId}`,
+                format: 'csv',
+                description: '触发数据保存'
+            };
+            const result = await apiRequest(`/api/trigger/save/${burstId}`, 'POST', options);
+            alert(`保存成功: ${result.data.saved_path}`);
+        }
+
+        async function deleteTrigger(burstId) {
+            if (confirm(`确认删除批次 ${burstId}?`)) {
+                await apiRequest(`/api/trigger/delete/${burstId}`, 'DELETE');
+                refreshTriggerList();
+                alert('删除成功');
+            }
+        }
+
+        // 事件绑定
+        document.getElementById('getStatus').addEventListener('click', updateSystemStatus);
+        document.getElementById('startCollection').addEventListener('click', () => apiRequest('/api/control/start', 'POST').then(() => alert('采集已启动')));
+        document.getElementById('stopCollection').addEventListener('click', () => apiRequest('/api/control/stop', 'POST').then(() => alert('采集已停止')));
+        document.getElementById('pingDevice').addEventListener('click', () => apiRequest('/api/control/ping', 'POST').then(() => alert('Ping命令已发送')));
+        document.getElementById('getDeviceInfo').addEventListener('click', () => apiRequest('/api/control/device_info', 'POST').then(() => alert('设备信息请求已发送')));
+        document.getElementById('setContinuousMode').addEventListener('click', () => apiRequest('/api/control/continuous_mode', 'POST').then(() => alert('已切换到连续模式')));
+        document.getElementById('setTriggerMode').addEventListener('click', () => apiRequest('/api/control/trigger_mode', 'POST').then(() => alert('已切换到触发模式')));
+        document.getElementById('requestTriggerData').addEventListener('click', () => apiRequest('/api/control/request_trigger_data', 'POST').then(() => alert('触发数据请求已发送')));
+        document.getElementById('listTriggers').addEventListener('click', refreshTriggerList);
+        document.getElementById('listFiles').addEventListener('click', async () => {
+            const result = await apiRequest('/api/files');
+            alert(`文件列表: ${JSON.stringify(result.data, null, 2)}`);
+        });
+        document.getElementById('healthCheck').addEventListener('click', async () => {
+            const result = await apiRequest('/health');
+            alert(`系统健康: ${JSON.stringify(result.data, null, 2)}`);
+        });
+
+        // 侧边栏切换
+        document.getElementById('toggleSidebar').addEventListener('click', () => {
+            document.getElementById('sidebar').classList.toggle('sidebar-hidden');
+        });
+    </script>
+</body>
+</html>

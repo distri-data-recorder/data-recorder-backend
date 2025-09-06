@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据采集工具</title>
+    <style>
+        :root {
+            --primary-color: #1890ff;
+            --success-color: #52c41a;
+            --warning-color: #faad14;
+            --error-color: #ff4d4f;
+            --background-color: #f0f2f5;
+            --card-bg: #ffffff;
+            --border-color: #d9d9d9;
+            --text-color: #262626;
+            --text-secondary: #595959;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: var(--card-bg);
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: var(--primary-color);
+            margin-bottom: 10px;
+        }
+        
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            background: var(--card-bg);
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .status-item {
+            text-align: center;
+        }
+        
+        .status-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        
+        .status-value {
+            font-size: 18px;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+        
+        .status-value.active {
+            color: var(--success-color);
+        }
+        
+        .status-value.inactive {
+            color: var(--error-color);
+        }
+        
+        .control-panel {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: var(--card-bg);
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .card-title {
+            font-size: 18px;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .btn-success {
+            background-color: var(--success-color);
+            color: white;
+        }
+        
+        .btn-warning {
+            background-color: var(--warning-color);
+            color: white;
+        }
+        
+        .btn-error {
+            background-color: var(--error-color);
+            color: white;
+        }
+        
+        button:hover {
+            opacity: 0.9;
+            transform: translateY(-2px);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .trigger-list {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 15px;
+        }
+        
+        .trigger-item {
+            padding: 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .trigger-item:hover {
+            background-color: #f5f5f5;
+            border-color: var(--primary-color);
+        }
+        
+        .trigger-item.selected {
+            background-color: #e6f7ff;
+            border-color: var(--primary-color);
+        }
+        
+        .trigger-header {
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .trigger-details {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        
+        .preview-container {
+            margin-top: 20px;
+        }
+        
+        .chart-container {
+            height: 300px;
+            position: relative;
+            margin-top: 20px;
+        }
+        
+        canvas {
+            background: white;
+            border-radius: 4px;
+            width: 100%;
+            height: 100%;
+        }
+        
+        .data-preview {
+            margin-top: 20px;
+        }
+        
+        .preview-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .preview-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .log-container {
+            background: #000;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            height: 150px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+        }
+        
+        .log-timestamp {
+            color: #00ffff;
+        }
+        
+        @media (max-width: 768px) {
+            .control-panel {
+                grid-template-columns: 1fr;
+            }
+            
+            .status-bar {
+                flex-direction: column;
+                gap: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>数据采集工具</h1>
+            <p>实时数据采集与触发数据管理</p>
+        </header>
+        
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="status-label">设备连接</div>
+                <div id="device-status" class="status-value inactive">未连接</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">数据采集</div>
+                <div id="collection-status" class="status-value inactive">未启动</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">工作模式</div>
+                <div id="mode-status" class="status-value">-</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">处理数据包</div>
+                <div id="packets-count" class="status-value">0</div>
+            </div>
+        </div>
+        
+        <div class="control-panel">
+            <div class="card">
+                <div class="card-title">系统控制</div>
+                <div class="btn-group">
+                    <button id="start-btn" class="btn-success">启动采集</button>
+                    <button id="stop-btn" class="btn-error">停止采集</button>
+                    <button id="ping-btn" class="btn-primary">设备Ping</button>
+                    <button id="device-info-btn" class="btn-primary">设备信息</button>
+                </div>
+                
+                <div class="card-title">模式切换</div>
+                <div class="btn-group">
+                    <button id="continuous-mode-btn" class="btn-primary">连续模式</button>
+                    <button id="trigger-mode-btn" class="btn-primary">触发模式</button>
+                </div>
+                
+                <div class="card-title">触发控制</div>
+                <div class="btn-group">
+                    <button id="request-trigger-btn" class="btn-warning">请求触发数据</button>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-title">触发数据管理</div>
+                <button id="refresh-trigger-btn" class="btn-primary">刷新触发列表</button>
+                <div class="trigger-list" id="trigger-list">
+                    <!-- 触发数据列表将在这里显示 -->
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="preview-header">
+                <div class="card-title">数据预览</div>
+                <div class="preview-actions">
+                    <button id="save-btn" class="btn-success">保存数据</button>
+                    <button id="delete-btn" class="btn-error">删除数据</button>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="data-chart"></canvas>
+            </div>
+            <div class="data-preview" id="data-preview">
+                <!-- 数据详情将在这里显示 -->
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-title">系统日志</div>
+            <div class="log-container" id="log-container">
+                <!-- 日志将在这里显示 -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API配置
+        const API_BASE = 'http://127.0.0.1:8080';
+        const WS_URL = 'ws://127.0.0.1:8081';
+        
+        // 全局变量
+        let ws = null;
+        let selectedBurstId = null;
+        let chartCtx = null;
+        let chart = null;
+        
+        // DOM元素
+        const elements = {
+            deviceStatus: document.getElementById('device-status'),
+            collectionStatus: document.getElementById('collection-status'),
+            modeStatus: document.getElementById('mode-status'),
+            packetsCount: document.getElementById('packets-count'),
+            startBtn: document.getElementById('start-btn'),
+            stopBtn: document.getElementById('stop-btn'),
+            pingBtn: document.getElementById('ping-btn'),
+            deviceInfoBtn: document.getElementById('device-info-btn'),
+            continuousModeBtn: document.getElementById('continuous-mode-btn'),
+            triggerModeBtn: document.getElementById('trigger-mode-btn'),
+            requestTriggerBtn: document.getElementById('request-trigger-btn'),
+            refreshTriggerBtn: document.getElementById('refresh-trigger-btn'),
+            triggerList: document.getElementById('trigger-list'),
+            saveBtn: document.getElementById('save-btn'),
+            deleteBtn: document.getElementById('delete-btn'),
+            dataPreview: document.getElementById('data-preview'),
+            logContainer: document.getElementById('log-container')
+        };
+        
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            setupEventListeners();
+            connectWebSocket();
+            updateSystemStatus();
+            setInterval(updateSystemStatus, 5000); // 每5秒更新一次状态
+        });
+        
+        // 初始化图表
+        function initChart() {
+            const canvas = document.getElementById('data-chart');
+            chartCtx = canvas.getContext('2d');
+            chart = new Chart(chartCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: '通道数据',
+                        data: [],
+                        borderColor: '#1890ff',
+                        backgroundColor: 'rgba(24, 144, 255, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            display: false
+                        },
+                        y: {
+                            beginAtZero: false
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false
+                        }
+                    },
+                    animation: {
+                        duration: 0
+                    }
+                }
+            });
+        }
+        
+        // 设置事件监听器
+        function setupEventListeners() {
+            elements.startBtn.addEventListener('click', () => sendControlCommand('/api/control/start'));
+            elements.stopBtn.addEventListener('click', () => sendControlCommand('/api/control/stop'));
+            elements.pingBtn.addEventListener('click', () => sendControlCommand('/api/control/ping'));
+            elements.deviceInfoBtn.addEventListener('click', () => sendControlCommand('/api/control/device_info'));
+            elements.continuousModeBtn.addEventListener('click', () => sendControlCommand('/api/control/continuous_mode'));
+            elements.triggerModeBtn.addEventListener('click', () => sendControlCommand('/api/control/trigger_mode'));
+            elements.requestTriggerBtn.addEventListener('click', () => sendControlCommand('/api/control/request_trigger_data'));
+            elements.refreshTriggerBtn.addEventListener('click', loadTriggerList);
+            elements.saveBtn.addEventListener('click', saveTriggerData);
+            elements.deleteBtn.addEventListener('click', deleteTriggerData);
+        }
+        
+        // 连接WebSocket
+        function connectWebSocket() {
+            ws = new WebSocket(WS_URL);
+            
+            ws.onopen = () => {
+                logMessage('WebSocket连接已建立');
+                ws.send(JSON.stringify({
+                    type: 'subscribe',
+                    channels: ['all']
+                }));
+            };
+            
+            ws.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+            };
+            
+            ws.onclose = () => {
+                logMessage('WebSocket连接已断开', 'error');
+                setTimeout(connectWebSocket, 5000); // 5秒后重连
+            };
+            
+            ws.onerror = (error) => {
+                logMessage(`WebSocket错误: ${error.message}`, 'error');
+            };
+        }
+        
+        // 处理WebSocket消息
+        function handleWebSocketMessage(message) {
+            switch(message.type) {
+                case 'welcome':
+                    logMessage(`欢迎消息: 客户端ID ${message.client_id}`);
+                    break;
+                case 'data':
+                    updateRealTimeChart(message.data);
+                    break;
+                case 'trigger_burst_complete':
+                    logMessage(`触发批次完成: ${message.burst_id}`);
+                    loadTriggerList(); // 自动刷新触发列表
+                    break;
+                case 'trigger_event':
+                    logMessage(`触发事件: 通道${message.channel} at ${new Date(message.timestamp).toLocaleTimeString()}`);
+                    break;
+                case 'pong':
+                    // 心跳响应，可忽略
+                    break;
+                default:
+                    logMessage(`未知消息类型: ${message.type}`);
+            }
+        }
+        
+        // 更新实时图表
+        function updateRealTimeChart(data) {
+            if (!chart) return;
+            
+            // 限制显示点数
+            const maxPoints = 100;
+            const newData = data.slice(-maxPoints);
+            
+            // 更新图表数据
+            chart.data.labels = Array.from({length: newData.length}, (_, i) => i);
+            chart.data.datasets[0].data = newData;
+            chart.update();
+        }
+        
+        // 更新系统状态
+        async function updateSystemStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/api/control/status`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    const data = result.data;
+                    
+                    // 更新状态显示
+                    elements.deviceStatus.textContent = data.device_connected ? '已连接' : '未连接';
+                    elements.deviceStatus.className = `status-value ${data.device_connected ? 'active' : 'inactive'}`;
+                    
+                    elements.collectionStatus.textContent = data.data_collection_active ? '运行中' : '未启动';
+                    elements.collectionStatus.className = `status-value ${data.data_collection_active ? 'active' : 'inactive'}`;
+                    
+                    elements.modeStatus.textContent = data.current_mode === 'continuous' ? '连续模式' : 
+                                                     data.current_mode === 'trigger' ? '触发模式' : '-';
+                    
+                    elements.packetsCount.textContent = data.packets_processed;
+                } else {
+                    logMessage(`获取状态失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                logMessage(`获取状态错误: ${error.message}`, 'error');
+            }
+        }
+        
+        // 发送控制命令
+        async function sendControlCommand(endpoint) {
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    logMessage(result.data);
+                    updateSystemStatus(); // 更新状态显示
+                } else {
+                    logMessage(`命令失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                logMessage(`命令错误: ${error.message}`, 'error');
+            }
+        }
+        
+        // 加载触发列表
+        async function loadTriggerList() {
+            try {
+                const response = await fetch(`${API_BASE}/api/trigger/list`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    renderTriggerList(result.data);
+                } else {
+                    logMessage(`获取触发列表失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                logMessage(`获取触发列表错误: ${error.message}`, 'error');
+            }
+        }
+        
+        // 渲染触发列表
+        function renderTriggerList(bursts) {
+            elements.triggerList.innerHTML = '';
+            
+            if (!bursts || bursts.length === 0) {
+                elements.triggerList.innerHTML = '<div class="trigger-item">暂无触发数据</div>';
+                return;
+            }
+            
+            bursts.forEach(burst => {
+                const item = document.createElement('div');
+                item.className = 'trigger-item';
+                item.dataset.burstId = burst.burst_id;
+                
+                const qualityClass = burst.quality === 'Good' ? 'success' : 
+                                    burst.quality === 'Warning' ? 'warning' : 'error';
+                
+                item.innerHTML = `
+                    <div class="trigger-header">
+                        <span>${burst.burst_id}</span>
+                        <span class="${qualityClass}">${burst.quality}</span>
+                    </div>
+                    <div class="trigger-details">
+                        通道: ${burst.trigger_channel} | 
+                        样本数: ${burst.total_samples} | 
+                        持续时间: ${burst.duration_ms.toFixed(2)}ms
+                    </div>
+                    <div class="trigger-details">
+                        触发时间: ${new Date(burst.trigger_timestamp * 1000).toLocaleString()}
+                    </div>
+                `;
+                
+                item.addEventListener('click', () => {
+                    // 移除其他项的选中状态
+                    document.querySelectorAll('.trigger-item').forEach(el => {
+                        el.classList.remove('selected');
+                    });
+                    
+                    // 添加当前项的选中状态
+                    item.classList.add('selected');
+                    
+                    // 加载预览数据
+                    selectedBurstId = burst.burst_id;
+                    loadTriggerPreview(burst.burst_id);
+                });
+                
+                elements.triggerList.appendChild(item);
+            });
+        }
+        
+        // 加载触发预览
+        async function loadTriggerPreview(burstId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/trigger/preview/${burstId}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    renderTriggerPreview(result.data);
+                } else {
+                    logMessage(`获取预览失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                logMessage(`获取预览错误: ${error.message}`, 'error');
+            }
+        }
+        
+        // 渲染触发预览
+        function renderTriggerPreview(data) {
+            // 更新图表
+            if (data.data_packets && data.data_packets.length > 0) {
+                // 合并所有数据包的数据
+                let allData = [];
+                data.data_packets.forEach(packet => {
+                    if (packet.data) {
+                        allData = allData.concat(packet.data);
+                    }
+                });
+                
+                // 更新图表
+                chart.data.labels = Array.from({length: allData.length}, (_, i) => i);
+                chart.data.datasets[0].data = allData;
+                chart.update();
+            }
+            
+            // 更新数据详情
+            elements.dataPreview.innerHTML = `
+                <div class="preview-details">
+                    <h3>触发批次详情</h3>
+                    <p><strong>批次ID:</strong> ${data.burst_id}</p>
+                    <p><strong>触发通道:</strong> ${data.trigger_channel}</p>
+                    <p><strong>触发时间:</strong> ${new Date(data.trigger_timestamp * 1000).toLocaleString()}</p>
+                    <p><strong>总样本数:</strong> ${data.total_samples}</p>
+                    <p><strong>数据包数:</strong> ${data.data_packets.length}</p>
+                    <p><strong>完整性:</strong> ${data.is_complete ? '完整' : '不完整'}</p>
+                </div>
+            `;
+        }
+        
+        // 保存触发数据
+        async function saveTriggerData() {
+            if (!selectedBurstId) {
+                logMessage('请先选择一个触发批次', 'warning');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/trigger/save/${selectedBurstId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        format: 'csv',
+                        description: '通过数据采集工具保存'
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    logMessage(`数据保存成功: ${result.data.saved_path}`);
+                } else {
+                    logMessage(`保存失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                logMessage(`保存错误: ${error.message}`, 'error');
+            }
+        }
+        
+        // 删除触发数据
+        async function deleteTriggerData() {
+            if (!selectedBurstId) {
+                logMessage('请先选择一个触发批次', 'warning');
+                return;
+            }
+            
+            if (!confirm('确定要删除这个触发批次吗？')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/trigger/delete/${selectedBurstId}`, {
+                    method: 'DELETE'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    logMessage('数据删除成功');
+                    selectedBurstId = null;
+                    loadTriggerList(); // 刷新列表
+                    // 清空预览
+                    chart.data.labels = [];
+                    chart.data.datasets[0].data = [];
+                    chart.update();
+                    elements.dataPreview.innerHTML = '';
+                } else {
+                    logMessage(`删除失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                logMessage(`删除错误: ${error.message}`, 'error');
+            }
+        }
+        
+        // 日志记录
+        function logMessage(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            
+            let typeClass = '';
+            switch(type) {
+                case 'error':
+                    typeClass = 'error';
+                    break;
+                case 'warning':
+                    typeClass = 'warning';
+                    break;
+                default:
+                    typeClass = 'info';
+            }
+            
+            logEntry.innerHTML = `<span class="log-timestamp">[${timestamp}]</span> <span class="${typeClass}">${message}</span>`;
+            elements.logContainer.appendChild(logEntry);
+            elements.logContainer.scrollTop = elements.logContainer.scrollHeight;
+        }
+        
+        // 添加样式到日志类型
+        const style = document.createElement('style');
+        style.textContent = `
+            .log-entry .info { color: #00ff00; }
+            .log-entry .warning { color: #ffff00; }
+            .log-entry .error { color: #ff0000; }
+            .success { color: var(--success-color); }
+            .warning { color: var(--warning-color); }
+            .error { color: var(--error-color); }
+        `;
+        document.head.appendChild(style);
+    </script>
+    
+    <!-- 引入Chart.js库 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</body>
+</html>

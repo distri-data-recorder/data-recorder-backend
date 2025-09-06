@@ -1,0 +1,1502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高性能数据采集系统</title>
+    <style>
+        :root {
+            --primary-color: #007bff;
+            --success-color: #28a745;
+            --danger-color: #dc3545;
+            --warning-color: #ffc107;
+            --info-color: #17a2b8;
+            --light-bg: #f8f9fa;
+            --border-color: #dee2e6;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        
+        h1, h2, h3 {
+            color: #333;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid var(--primary-color);
+        }
+        
+        .status-panel {
+            background: var(--light-bg);
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid var(--border-color);
+        }
+        
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .status-item {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .status-label {
+            font-weight: bold;
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .status-value {
+            font-size: 1.2em;
+            margin-top: 5px;
+        }
+        
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        .btn-primary {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .btn-success {
+            background-color: var(--success-color);
+            color: white;
+        }
+        
+        .btn-danger {
+            background-color: var(--danger-color);
+            color: white;
+        }
+        
+        .btn-warning {
+            background-color: var(--warning-color);
+            color: #333;
+        }
+        
+        .btn-info {
+            background-color: var(--info-color);
+            color: white;
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .section {
+            margin: 30px 0;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.05);
+        }
+        
+        .section h2 {
+            margin-top: 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        th {
+            background-color: var(--light-bg);
+            font-weight: 600;
+        }
+        
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 500;
+        }
+        
+        .badge-success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .badge-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .badge-warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        
+        .badge-info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+        }
+        
+        .websocket-status {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        
+        .websocket-status.connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .websocket-status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .websocket-status.connecting {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        
+        .dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .dot.connected {
+            background-color: #28a745;
+            box-shadow: 0 0 6px #28a745;
+        }
+        
+        .dot.disconnected {
+            background-color: #dc3545;
+        }
+        
+        .dot.connecting {
+            background-color: #ffc107;
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 0.6; }
+            50% { opacity: 1; }
+            100% { opacity: 0.6; }
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .chart-container {
+            height: 300px;
+            margin: 20px 0;
+            background: #f9f9f9;
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .chart-placeholder {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #999;
+            font-size: 18px;
+        }
+        
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border: 1px solid transparent;
+            border-bottom: none;
+            border-radius: 5px 5px 0 0;
+            margin-right: 5px;
+        }
+        
+        .tab.active {
+            background: white;
+            border-color: var(--border-color);
+            border-bottom-color: white;
+            font-weight: 600;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 5px;
+            color: white;
+            z-index: 1000;
+            transform: translateX(120%);
+            transition: transform 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .notification.show {
+            transform: translateX(0);
+        }
+        
+        .notification.success {
+            background-color: var(--success-color);
+        }
+        
+        .notification.error {
+            background-color: var(--danger-color);
+        }
+        
+        .notification.info {
+            background-color: var(--info-color);
+        }
+        
+        .actions-cell {
+            display: flex;
+            gap: 5px;
+        }
+        
+        .file-tree {
+            list-style: none;
+            padding-left: 20px;
+        }
+        
+        .file-tree li {
+            margin: 5px 0;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        
+        .file-tree li:hover {
+            background-color: var(--light-bg);
+        }
+        
+        .file-icon {
+            margin-right: 8px;
+        }
+        
+        #realtimeChart {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        @media (max-width: 768px) {
+            .status-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .btn-group {
+                flex-direction: column;
+            }
+            
+            .tabs {
+                flex-wrap: wrap;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>高性能数据采集系统</h1>
+        
+        <!-- 系统状态面板 -->
+        <div class="status-panel">
+            <h2>系统状态</h2>
+            <div class="websocket-status disconnected">
+                <span class="dot disconnected"></span>
+                <span>WebSocket连接: 断开</span>
+            </div>
+            <div class="status-grid" id="systemStatus">
+                <div class="status-item">
+                    <div class="status-label">数据采集状态</div>
+                    <div class="status-value" id="collectionStatus">-</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">设备连接</div>
+                    <div class="status-value" id="deviceStatus">-</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">工作模式</div>
+                    <div class="status-value" id="currentMode">-</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">已处理数据包</div>
+                    <div class="status-value" id="packetsProcessed">-</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">运行时间</div>
+                    <div class="status-value" id="uptime">-</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">内存使用</div>
+                    <div class="status-value" id="memoryUsage">-</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">连接客户端</div>
+                    <div class="status-value" id="connectedClients">-</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">连接类型</div>
+                    <div class="status-value" id="connectionType">-</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 控制按钮组 -->
+        <div class="btn-group">
+            <button id="startBtn" class="btn-success">开始采集</button>
+            <button id="stopBtn" class="btn-danger" disabled>停止采集</button>
+            <button id="pingBtn" class="btn-info">设备Ping测试</button>
+            <button id="deviceInfoBtn" class="btn-info">获取设备信息</button>
+            <button id="continuousModeBtn" class="btn-primary">连续模式</button>
+            <button id="triggerModeBtn" class="btn-primary">触发模式</button>
+            <button id="requestTriggerBtn" class="btn-warning" disabled>请求触发数据</button>
+        </div>
+        
+        <!-- 配置表单 -->
+        <div class="section">
+            <h2>通道配置</h2>
+            <div class="form-group">
+                <label for="channelCount">通道数量:</label>
+                <select id="channelCount">
+                    <option value="1">1通道</option>
+                    <option value="2" selected>2通道</option>
+                    <option value="4">4通道</option>
+                    <option value="8">8通道</option>
+                </select>
+            </div>
+            <div id="channelConfig">
+                <div class="form-group">
+                    <label>通道 0:</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="number" id="sampleRate0" value="10000" min="1" placeholder="采样率(Hz)">
+                        <select id="format0">
+                            <option value="1">int16</option>
+                            <option value="2">int32</option>
+                            <option value="4" selected>float32</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>通道 1:</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="number" id="sampleRate1" value="10000" min="1" placeholder="采样率(Hz)">
+                        <select id="format1">
+                            <option value="1">int16</option>
+                            <option value="2">int32</option>
+                            <option value="4" selected>float32</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <button id="configureBtn" class="btn-primary">应用配置</button>
+        </div>
+        
+        <!-- 标签页导航 -->
+        <div class="tabs">
+            <div class="tab active" data-tab="realtime">实时数据</div>
+            <div class="tab" data-tab="triggers">触发批次</div>
+            <div class="tab" data-tab="files">文件管理</div>
+        </div>
+        
+        <!-- 实时数据标签页 -->
+        <div class="tab-content active" id="realtime-tab">
+            <div class="section">
+                <h2>实时数据可视化</h2>
+                <div class="chart-container">
+                    <div class="chart-placeholder" id="chartPlaceholder">等待数据...</div>
+                    <canvas id="realtimeChart"></canvas>
+                </div>
+                <div class="websocket-status">
+                    <span class="dot disconnected"></span>
+                    <span id="websocketStatusText">WebSocket连接: 断开</span>
+                </div>
+                <div class="btn-group">
+                    <button id="subscribeAllBtn" class="btn-info">订阅所有数据</button>
+                    <button id="subscribeDataBtn" class="btn-info">仅订阅数据流</button>
+                    <button id="subscribeTriggerBtn" class="btn-info">订阅触发事件</button>
+                    <button id="sendPingBtn" class="btn-info">发送Ping</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 触发批次标签页 -->
+        <div class="tab-content" id="triggers-tab">
+            <div class="section">
+                <h2>触发批次管理</h2>
+                <button id="refreshTriggersBtn" class="btn-info">刷新批次列表</button>
+                <table id="triggersTable">
+                    <thead>
+                        <tr>
+                            <th>批次ID</th>
+                            <th>触发时间</th>
+                            <th>通道</th>
+                            <th>采样点数</th>
+                            <th>持续时间(ms)</th>
+                            <th>质量</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="triggersTableBody">
+                        <tr>
+                            <td colspan="7" style="text-align: center;">暂无触发批次数据</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- 批次预览模态框（简化版） -->
+            <div id="previewModal" class="hidden">
+                <div class="section">
+                    <h2>批次预览: <span id="previewBurstId"></span></h2>
+                    <div class="form-group">
+                        <label>保存配置:</label>
+                        <input type="text" id="saveDir" placeholder="目录 (如: experiments/test)" value="experiments/test">
+                        <input type="text" id="saveFilename" placeholder="文件名 (不含扩展名)" value="data">
+                        <select id="saveFormat">
+                            <option value="csv">CSV</option>
+                            <option value="json">JSON</option>
+                            <option value="binary">二进制</option>
+                        </select>
+                        <input type="text" id="saveDescription" placeholder="描述信息" value="实验数据">
+                    </div>
+                    <div class="btn-group">
+                        <button id="saveBurstBtn" class="btn-success">保存批次</button>
+                        <button id="deleteBurstBtn" class="btn-danger">删除批次</button>
+                        <button id="closePreviewBtn" class="btn-primary">关闭</button>
+                    </div>
+                    <div id="previewDetails">
+                        <h3>批次详情</h3>
+                        <div id="previewContent"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 文件管理标签页 -->
+        <div class="tab-content" id="files-tab">
+            <div class="section">
+                <h2>文件管理</h2>
+                <div class="form-group">
+                    <label for="fileDir">目录路径:</label>
+                    <input type="text" id="fileDir" placeholder="留空为根目录" value="">
+                </div>
+                <button id="listFilesBtn" class="btn-info">列出文件</button>
+                <button id="uploadFileBtn" class="btn-primary">上传文件</button>
+                
+                <input type="file" id="fileUpload" class="hidden">
+                
+                <table id="filesTable">
+                    <thead>
+                        <tr>
+                            <th>文件名</th>
+                            <th>大小</th>
+                            <th>创建时间</th>
+                            <th>类型</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="filesTableBody">
+                        <tr>
+                            <td colspan="5" style="text-align: center;">暂无文件数据</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 通知区域 -->
+    <div id="notification" class="notification"></div>
+    
+    <script>
+        // WebSocket连接
+        let ws = null;
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 5;
+        const RECONNECT_DELAY = 3000;
+        
+        // 数据存储
+        let chartData = {
+            labels: [],
+            datasets: []
+        };
+        
+        let currentBurstId = null;
+        
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initWebSocket();
+            updateSystemStatus();
+            setupEventListeners();
+            setupChannelConfig();
+            setupTabs();
+            
+            // 开始定期更新系统状态
+            setInterval(updateSystemStatus, 5000);
+        });
+        
+        // 初始化WebSocket连接
+        function initWebSocket() {
+            const wsUrl = 'ws://127.0.0.1:8081';
+            
+            updateWebSocketStatus('connecting', '连接中...');
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function() {
+                console.log('WebSocket连接已建立');
+                updateWebSocketStatus('connected', '已连接');
+                reconnectAttempts = 0;
+                
+                // 发送欢迎订阅
+                sendWebSocketMessage({
+                    type: 'subscribe',
+                    channels: ['all']
+                });
+                
+                showNotification('WebSocket连接成功', 'success');
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    const message = JSON.parse(event.data);
+                    handleWebSocketMessage(message);
+                } catch (error) {
+                    console.error('WebSocket消息解析错误:', error);
+                }
+            };
+            
+            ws.onclose = function() {
+                console.log('WebSocket连接已关闭');
+                updateWebSocketStatus('disconnected', '已断开');
+                
+                if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    reconnectAttempts++;
+                    setTimeout(initWebSocket, RECONNECT_DELAY);
+                    showNotification(`正在尝试重新连接 (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`, 'info');
+                } else {
+                    showNotification('WebSocket连接失败，请检查服务是否运行', 'error');
+                }
+            };
+            
+            ws.onerror = function(error) {
+                console.error('WebSocket错误:', error);
+                showNotification('WebSocket发生错误', 'error');
+            };
+        }
+        
+        // 处理WebSocket消息
+        function handleWebSocketMessage(message) {
+            switch(message.type) {
+                case 'welcome':
+                    console.log('收到欢迎消息:', message.client_id);
+                    break;
+                    
+                case 'subscription_updated':
+                    console.log('订阅更新:', message);
+                    showNotification('订阅更新成功', 'success');
+                    break;
+                    
+                case 'data':
+                    // 处理实时数据并更新图表
+                    updateRealtimeChart(message);
+                    break;
+                    
+                case 'trigger_event':
+                    console.log('触发事件:', message);
+                    showNotification(`触发事件: 通道${message.channel}`, 'info');
+                    break;
+                    
+                case 'trigger_burst_complete':
+                    console.log('触发批次完成:', message.burst_id);
+                    showNotification(`触发批次完成: ${message.burst_id}`, 'success');
+                    // 自动刷新触发批次列表
+                    loadTriggerBursts();
+                    break;
+                    
+                case 'pong':
+                    console.log('收到Pong响应:', message.timestamp);
+                    showNotification('Ping-Pong响应正常', 'success');
+                    break;
+                    
+                default:
+                    console.log('未知消息类型:', message.type);
+            }
+        }
+        
+        // 发送WebSocket消息
+        function sendWebSocketMessage(message) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(message));
+            } else {
+                showNotification('WebSocket未连接，无法发送消息', 'error');
+            }
+        }
+        
+        // 更新WebSocket状态显示
+        function updateWebSocketStatus(status, text) {
+            const statusElement = document.querySelector('.websocket-status');
+            const dotElement = document.querySelector('.websocket-status .dot');
+            const textElement = document.getElementById('websocketStatusText');
+            
+            statusElement.className = `websocket-status ${status}`;
+            dotElement.className = `dot ${status}`;
+            if (textElement) {
+                textElement.textContent = `WebSocket连接: ${text}`;
+            }
+        }
+        
+        // 更新系统状态
+        async function updateSystemStatus() {
+            try {
+                const response = await fetch('http://127.0.0.1:8080/api/control/status');
+                const result = await response.json();
+                
+                if (result.success && result.data) {
+                    const data = result.data;
+                    
+                    // 更新状态显示
+                    document.getElementById('collectionStatus').textContent = 
+                        data.data_collection_active ? '运行中' : '已停止';
+                    document.getElementById('collectionStatus').className = 
+                        data.data_collection_active ? 'status-value success' : 'status-value';
+                        
+                    document.getElementById('deviceStatus').textContent = 
+                        data.device_connected ? '已连接' : '未连接';
+                    document.getElementById('deviceStatus').className = 
+                        data.device_connected ? 'status-value success' : 'status-value danger';
+                        
+                    document.getElementById('currentMode').textContent = 
+                        data.current_mode === 'continuous' ? '连续模式' : '触发模式';
+                        
+                    document.getElementById('packetsProcessed').textContent = 
+                        data.packets_processed.toLocaleString();
+                        
+                    document.getElementById('uptime').textContent = 
+                        formatDuration(data.uptime_seconds);
+                        
+                    document.getElementById('memoryUsage').textContent = 
+                        `${data.memory_usage_mb.toFixed(1)} MB`;
+                        
+                    document.getElementById('connectedClients').textContent = 
+                        data.connected_clients;
+                        
+                    document.getElementById('connectionType').textContent = 
+                        data.connection_type;
+                    
+                    // 根据状态更新按钮可用性
+                    document.getElementById('startBtn').disabled = data.data_collection_active;
+                    document.getElementById('stopBtn').disabled = !data.data_collection_active;
+                    document.getElementById('requestTriggerBtn').disabled = 
+                        !data.trigger_support || data.current_mode !== 'trigger';
+                }
+            } catch (error) {
+                console.error('获取系统状态失败:', error);
+                showNotification('获取系统状态失败', 'error');
+            }
+        }
+        
+        // 格式化持续时间
+        function formatDuration(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            
+            if (h > 0) {
+                return `${h}小时${m}分钟${s}秒`;
+            } else if (m > 0) {
+                return `${m}分钟${s}秒`;
+            } else {
+                return `${s}秒`;
+            }
+        }
+        
+        // 设置事件监听器
+        function setupEventListeners() {
+            // 控制按钮
+            document.getElementById('startBtn').addEventListener('click', startDataCollection);
+            document.getElementById('stopBtn').addEventListener('click', stopDataCollection);
+            document.getElementById('pingBtn').addEventListener('click', pingDevice);
+            document.getElementById('deviceInfoBtn').addEventListener('click', getDeviceInfo);
+            document.getElementById('continuousModeBtn').addEventListener('click', setContinuousMode);
+            document.getElementById('triggerModeBtn').addEventListener('click', setTriggerMode);
+            document.getElementById('requestTriggerBtn').addEventListener('click', requestTriggerData);
+            document.getElementById('configureBtn').addEventListener('click', configureStream);
+            
+            // WebSocket控制按钮
+            document.getElementById('subscribeAllBtn').addEventListener('click', () => {
+                sendWebSocketMessage({
+                    type: 'subscribe',
+                    channels: ['all']
+                });
+            });
+            
+            document.getElementById('subscribeDataBtn').addEventListener('click', () => {
+                sendWebSocketMessage({
+                    type: 'subscribe',
+                    channels: ['data']
+                });
+            });
+            
+            document.getElementById('subscribeTriggerBtn').addEventListener('click', () => {
+                sendWebSocketMessage({
+                    type: 'subscribe',
+                    channels: ['trigger_events', 'trigger_bursts']
+                });
+            });
+            
+            document.getElementById('sendPingBtn').addEventListener('click', () => {
+                sendWebSocketMessage({
+                    type: 'ping'
+                });
+            });
+            
+            // 触发批次管理
+            document.getElementById('refreshTriggersBtn').addEventListener('click', loadTriggerBursts);
+            document.getElementById('saveBurstBtn').addEventListener('click', saveTriggerBurst);
+            document.getElementById('deleteBurstBtn').addEventListener('click', deleteTriggerBurst);
+            document.getElementById('closePreviewBtn').addEventListener('click', closePreviewModal);
+            
+            // 文件管理
+            document.getElementById('listFilesBtn').addEventListener('click', listFiles);
+            document.getElementById('uploadFileBtn').addEventListener('click', () => {
+                document.getElementById('fileUpload').click();
+            });
+            
+            document.getElementById('fileUpload').addEventListener('change', uploadFile);
+        }
+        
+        // 设置通道配置
+        function setupChannelConfig() {
+            document.getElementById('channelCount').addEventListener('change', function() {
+                const count = parseInt(this.value);
+                const configContainer = document.getElementById('channelConfig');
+                configContainer.innerHTML = '';
+                
+                for (let i = 0; i < count; i++) {
+                    const div = document.createElement('div');
+                    div.className = 'form-group';
+                    div.innerHTML = `
+                        <label>通道 ${i}:</label>
+                        <div style="display: flex; gap: 10px;">
+                            <input type="number" id="sampleRate${i}" value="10000" min="1" placeholder="采样率(Hz)">
+                            <select id="format${i}">
+                                <option value="1">int16</option>
+                                <option value="2">int32</option>
+                                <option value="4" selected>float32</option>
+                            </select>
+                        </div>
+                    `;
+                    configContainer.appendChild(div);
+                }
+            });
+        }
+        
+        // 设置标签页
+        function setupTabs() {
+            const tabs = document.querySelectorAll('.tab');
+            tabs.forEach(tab => {
+                tab.addEventListener('click', function() {
+                    // 移除所有active类
+                    tabs.forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    
+                    // 添加active类到当前标签
+                    this.classList.add('active');
+                    const tabId = this.getAttribute('data-tab');
+                    document.getElementById(`${tabId}-tab`).classList.add('active');
+                });
+            });
+        }
+        
+        // API调用函数
+        async function startDataCollection() {
+            try {
+                const response = await fetch('http://127.0.0.1:8080/api/control/start', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification('数据采集已启动', 'success');
+                    updateSystemStatus();
+                } else {
+                    showNotification(`启动失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showNotification('启动数据采集失败', 'error');
+                console.error('启动数据采集失败:', error);
+            }
+        }
+        
+        async function stopDataCollection() {
+            try {
+                const response = await fetch('http://127.0.0.1:8080/api/control/stop', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification('数据采集已停止', 'success');
+                    updateSystemStatus();
+                } else {
+                    showNotification(`停止失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showNotification('停止数据采集失败', 'error');
+                console.error('停止数据采集失败:', error);
+            }
+        }
+        
+        async function pingDevice() {
+            try {
+                const response = await fetch('http://127.0.0.1:8080/api/control/ping', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification('Ping命令已发送', 'success');
+                } else {
+                    showNotification(`Ping失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showNotification('发送Ping命令失败', 'error');
+                console.error('发送Ping命令失败:', error);
+            }
+        }
+        
+        async function getDeviceInfo() {
+            try {
+                const response = await fetch('http://127.0.0.1:8080/api/control/device_info', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification('设备信息请求已发送', 'success');
+                } else {
+                    showNotification(`获取设备信息失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showNotification('获取设备信息失败', 'error');
+                console.error('获取设备信息失败:', error);
+            }
+        }
+        
+        async function setContinuousMode() {
+            try {
+                const response = await fetch('http://127.0.0.1:8080/api/control/continuous_mode', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification('已切换到连续模式', 'success');
+                    updateSystemStatus();
+                } else {
+                    showNotification(`切换失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showNotification('切换到连续模式失败', 'error');
+                console.error('切换到连续模式失败:', error);
+            }
+        }
+        
+        async function setTriggerMode() {
+            try {
+                const response = await fetch('http://127.0.0.1:8080/api/control/trigger_mode', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification('已切换到触发模式', 'success');
+                    updateSystemStatus();
+                } else {
+                    showNotification(`切换失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showNotification('切换到触发模式失败', 'error');
+                console.error('切换到触发模式失败:', error);
+            }
+        }
+        
+        async function requestTriggerData() {
+            try {
+                const response = await fetch('http://127.0.0.1:8080/api/control/request_trigger_data', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification('触发数据请求已发送', 'success');
+                } else {
+                    showNotification(`请求失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showNotification('请求触发数据失败', 'error');
+                console.error('请求触发数据失败:', error);
+            }
+        }
+        
+        async function configureStream() {
+            try {
+                const channelCount = parseInt(document.getElementById('channelCount').value);
+                const channels = [];
+                
+                for (let i = 0; i < channelCount; i++) {
+                    const sampleRate = parseInt(document.getElementById(`sampleRate${i}`).value);
+                    const format = parseInt(document.getElementById(`format${i}`).value);
+                    
+                    channels.push({
+                        channel_id: i,
+                        sample_rate: sampleRate,
+                        format: format
+                    });
+                }
+                
+                const response = await fetch('http://127.0.0.1:8080/api/control/configure', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ channels })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification('流配置已发送', 'success');
+                } else {
+                    showNotification(`配置失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showNotification('配置流失败', 'error');
+                console.error('配置流失败:', error);
+            }
+        }
+        
+        // 加载触发批次列表
+        async function loadTriggerBursts() {
+            try {
+                const response = await fetch('http://127.0.0.1:8080/api/trigger/list');
+                const result = await response.json();
+                
+                if (result.success && Array.isArray(result.data)) {
+                    const tableBody = document.getElementById('triggersTableBody');
+                    tableBody.innerHTML = '';
+                    
+                    if (result.data.length === 0) {
+                        tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center;">暂无触发批次数据</td></tr>';
+                        return;
+                    }
+                    
+                    result.data.forEach(burst => {
+                        const row = document.createElement('tr');
+                        const qualityBadge = getQualityBadge(burst.quality);
+                        const actions = `
+                            <div class="actions-cell">
+                                <button class="btn-info preview-btn" data-burst-id="${burst.burst_id}">预览</button>
+                                <button class="btn-success save-btn" data-burst-id="${burst.burst_id}">保存</button>
+                                <button class="btn-danger delete-btn" data-burst-id="${burst.burst_id}">删除</button>
+                            </div>
+                        `;
+                        
+                        row.innerHTML = `
+                            <td>${burst.burst_id}</td>
+                            <td>${formatTimestamp(burst.trigger_timestamp)}</td>
+                            <td>${burst.trigger_channel}</td>
+                            <td>${burst.total_samples.toLocaleString()}</td>
+                            <td>${burst.duration_ms.toFixed(1)}</td>
+                            <td>${qualityBadge}</td>
+                            <td>${actions}</td>
+                        `;
+                        
+                        tableBody.appendChild(row);
+                    });
+                    
+                    // 为按钮添加事件监听器
+                    document.querySelectorAll('.preview-btn').forEach(btn => {
+                        btn.addEventListener('click', function() {
+                            previewTriggerBurst(this.getAttribute('data-burst-id'));
+                        });
+                    });
+                    
+                    document.querySelectorAll('.save-btn').forEach(btn => {
+                        btn.addEventListener('click', function() {
+                            quickSaveTriggerBurst(this.getAttribute('data-burst-id'));
+                        });
+                    });
+                    
+                    document.querySelectorAll('.delete-btn').forEach(btn => {
+                        btn.addEventListener('click', function() {
+                            if (confirm('确定要删除这个触发批次吗？')) {
+                                deleteTriggerBurstById(this.getAttribute('data-burst-id'));
+                            }
+                        });
+                    });
+                }
+            } catch (error) {
+                showNotification('加载触发批次失败', 'error');
+                console.error('加载触发批次失败:', error);
+            }
+        }
+        
+        // 预览触发批次
+        async function previewTriggerBurst(burstId) {
+            try {
+                const response = await fetch(`http://127.0.0.1:8080/api/trigger/preview/${burstId}`);
+                const result = await response.json();
+                
+                if (result.success && result.data) {
+                    currentBurstId = burstId;
+                    document.getElementById('previewBurstId').textContent = burstId;
+                    
+                    // 显示预览模态框
+                    document.getElementById('previewModal').classList.remove('hidden');
+                    document.getElementById('triggers-tab').classList.add('hidden');
+                    
+                    // 显示批次详情
+                    const content = document.getElementById('previewContent');
+                    const data = result.data;
+                    
+                    let html = `
+                        <p><strong>触发时间:</strong> ${formatTimestamp(data.trigger_timestamp)}</p>
+                        <p><strong>触发通道:</strong> ${data.trigger_channel}</p>
+                        <p><strong>采样点数:</strong> ${data.total_samples.toLocaleString()}</p>
+                        <p><strong>持续时间:</strong> ${data.duration_ms.toFixed(1)} ms</p>
+                        <p><strong>数据包数量:</strong> ${data.data_packets.length}</p>
+                        <p><strong>完整性:</strong> ${data.is_complete ? '完整' : '不完整'}</p>
+                    `;
+                    
+                    // 显示通道统计
+                    if (data.quality_summary && data.quality_summary.channel_stats) {
+                        html += '<h4>通道统计:</h4><ul>';
+                        data.quality_summary.channel_stats.forEach(stat => {
+                            html += `
+                                <li>通道 ${stat.channel_id}: 
+                                    样本数=${stat.sample_count}, 
+                                    最小值=${stat.min_value.toFixed(3)}, 
+                                    最大值=${stat.max_value.toFixed(3)}, 
+                                    平均值=${stat.avg_value.toFixed(3)}, 
+                                    RMS=${stat.rms_value.toFixed(3)}
+                                </li>
+                            `;
+                        });
+                        html += '</ul>';
+                    }
+                    
+                    content.innerHTML = html;
+                }
+            } catch (error) {
+                showNotification('预览触发批次失败', 'error');
+                console.error('预览触发批次失败:', error);
+            }
+        }
+        
+        // 保存触发批次
+        async function saveTriggerBurst() {
+            if (!currentBurstId) return;
+            
+            try {
+                const options = {
+                    dir: document.getElementById('saveDir').value || undefined,
+                    filename: document.getElementById('saveFilename').value || undefined,
+                    format: document.getElementById('saveFormat').value,
+                    description: document.getElementById('saveDescription').value || undefined
+                };
+                
+                const response = await fetch(`http://127.0.0.1:8080/api/trigger/save/${currentBurstId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(options)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success && result.data) {
+                    showNotification(`批次已保存到: ${result.data.saved_path}`, 'success');
+                    closePreviewModal();
+                } else {
+                    showNotification(`保存失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showNotification('保存触发批次失败', 'error');
+                console.error('保存触发批次失败:', error);
+            }
+        }
+        
+        // 快速保存触发批次（使用默认设置）
+        async function quickSaveTriggerBurst(burstId) {
+            try {
+                const options = {
+                    format: 'csv'
+                };
+                
+                const response = await fetch(`http://127.0.0.1:8080/api/trigger/save/${burstId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(options)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success && result.data) {
+                    showNotification(`批次已保存到: ${result.data.saved_path}`, 'success');
+                } else {
+                    showNotification(`保存失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showNotification('保存触发批次失败', 'error');
+                console.error('保存触发批次失败:', error);
+            }
+        }
+        
+        // 删除触发批次
+        async function deleteTriggerBurst() {
+            if (!currentBurstId) return;
+            
+            if (!confirm('确定要删除这个触发批次吗？')) return;
+            
+            try {
+                const response = await fetch(`http://127.0.0.1:8080/api/trigger/delete/${currentBurstId}`, {
+                    method: 'DELETE'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification('触发批次已删除', 'success');
+                    closePreviewModal();
+                    loadTriggerBursts();
+                } else {
+                    showNotification(`删除失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showNotification('删除触发批次失败', 'error');
+                console.error('删除触发批次失败:', error);
+            }
+        }
+        
+        // 通过ID删除触发批次
+        async function deleteTriggerBurstById(burstId) {
+            try {
+                const response = await fetch(`http://127.0.0.1:8080/api/trigger/delete/${burstId}`, {
+                    method: 'DELETE'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification('触发批次已删除', 'success');
+                    loadTriggerBursts();
+                } else {
+                    showNotification(`删除失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showNotification('删除触发批次失败', 'error');
+                console.error('删除触发批次失败:', error);
+            }
+        }
+        
+        // 关闭预览模态框
+        function closePreviewModal() {
+            document.getElementById('previewModal').classList.add('hidden');
+            document.getElementById('triggers-tab').classList.remove('hidden');
+            currentBurstId = null;
+        }
+        
+        // 列出文件
+        async function listFiles() {
+            try {
+                const dir = document.getElementById('fileDir').value;
+                let url = 'http://127.0.0.1:8080/api/files';
+                
+                if (dir) {
+                    url += `?dir=${encodeURIComponent(dir)}`;
+                }
+                
+                const response = await fetch(url);
+                const result = await response.json();
+                
+                if (result.success && Array.isArray(result.data)) {
+                    const tableBody = document.getElementById('filesTableBody');
+                    tableBody.innerHTML = '';
+                    
+                    if (result.data.length === 0) {
+                        tableBody.innerHTML = '<tr><td colspan="5" style="text-align: center;">目录中没有文件</td></tr>';
+                        return;
+                    }
+                    
+                    result.data.forEach(file => {
+                        const row = document.createElement('tr');
+                        const actions = `
+                            <div class="actions-cell">
+                                <button class="btn-info download-btn" data-filename="${encodeURIComponent(file.filename)}">下载</button>
+                            </div>
+                        `;
+                        
+                        row.innerHTML = `
+                            <td>${file.filename}</td>
+                            <td>${formatFileSize(file.size_bytes)}</td>
+                            <td>${formatTimestamp(file.created_at / 1000)}</td>
+                            <td>${file.file_type}</td>
+                            <td>${actions}</td>
+                        `;
+                        
+                        tableBody.appendChild(row);
+                    });
+                    
+                    // 为下载按钮添加事件监听器
+                    document.querySelectorAll('.download-btn').forEach(btn => {
+                        btn.addEventListener('click', function() {
+                            downloadFile(this.getAttribute('data-filename'));
+                        });
+                    });
+                }
+            } catch (error) {
+                showNotification('列出文件失败', 'error');
+                console.error('列出文件失败:', error);
+            }
+        }
+        
+        // 下载文件
+        async function downloadFile(encodedFilename) {
+            try {
+                const url = `http://127.0.0.1:8080/api/files/${encodedFilename}`;
+                
+                const response = await fetch(url);
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const filename = decodeURIComponent(encodedFilename).split('/').pop();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    
+                    showNotification(`文件 ${filename} 下载成功`, 'success');
+                } else {
+                    showNotification('文件下载失败', 'error');
+                }
+            } catch (error) {
+                showNotification('下载文件失败', 'error');
+                console.error('下载文件失败:', error);
+            }
+        }
+        
+        // 上传文件
+        async function uploadFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            try {
+                const reader = new FileReader();
+                reader.onload = async function(e) {
+                    const base64 = e.target.result.split(',')[1]; // 移除 data:... 前缀
+                    
+                    const dir = document.getElementById('fileDir').value || '';
+                    const filename = file.name;
+                    
+                    const requestData = {
+                        dir: dir || undefined,
+                        filename: filename,
+                        base64: base64
+                    };
+                    
+                    const response = await fetch('http://127.0.0.1:8080/api/files/save', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(requestData)
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        showNotification(`文件已保存到: ${result.data}`, 'success');
+                        listFiles(); // 刷新文件列表
+                    } else {
+                        showNotification(`文件保存失败: ${result.error}`, 'error');
+                    }
+                };
+                
+                reader.readAsDataURL(file);
+            } catch (error) {
+                showNotification('上传文件失败', 'error');
+                console.error('上传文件失败:', error);
+            }
+        }
+        
+        // 更新实时图表
+        function updateRealtimeChart(data) {
+            // 这里简化了图表实现，实际项目中应使用Chart.js等库
+            const placeholder = document.getElementById('chartPlaceholder');
+            if (placeholder) {
+                placeholder.textContent = `收到数据包 #${data.sequence}，${data.channel_count}通道，${data.data.length}个样本`;
+            }
+            
+            // 在实际项目中，这里应该更新真正的图表
+            console.log('实时数据:', data);
+        }
+        
+        // 格式化时间戳
+        function formatTimestamp(timestamp) {
+            // timestamp 可能是秒或毫秒，进行判断
+            if (timestamp.toString().length === 10) {
+                timestamp *= 1000; // 转换为毫秒
+            }
+            
+            const date = new Date(timestamp);
+            return date.toLocaleString();
+        }
+        
+        // 格式化文件大小
+        function formatFileSize(bytes) {
+            if (bytes < 1024) {
+                return `${bytes} B`;
+            } else if (bytes < 1024 * 1024) {
+                return `${(bytes / 1024).toFixed(1)} KB`;
+            } else {
+                return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+            }
+        }
+        
+        // 获取质量徽章
+        function getQualityBadge(quality) {
+            let className = 'badge ';
+            let text = quality;
+            
+            switch (quality) {
+                case 'Good':
+                    className += 'badge-success';
+                    break;
+                case 'Warning':
+                    className += 'badge-warning';
+                    break;
+                case 'Error':
+                    className += 'badge-danger';
+                    break;
+                default:
+                    className += 'badge-info';
+            }
+            
+            return `<span class="${className}">${text}</span>`;
+        }
+        
+        // 显示通知
+        function showNotification(message, type = 'info') {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = `notification ${type} show`;
+            
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+    </script>
+</body>
+</html>

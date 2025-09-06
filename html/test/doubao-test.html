@@ -1,0 +1,1532 @@
+<html lang="zh-CN"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据采集与处理系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+    
+    <!-- Tailwind 配置 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#165DFF',
+                        secondary: '#36CFC9',
+                        success: '#52C41A',
+                        warning: '#FAAD14',
+                        danger: '#FF4D4F',
+                        info: '#1890FF',
+                        dark: '#1D2129',
+                        light: '#F2F3F5'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .card-shadow {
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            }
+            .sidebar-shadow {
+                box-shadow: 0 0 20px rgba(0, 0, 0, 0.05);
+            }
+            .animate-pulse-slow {
+                animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+            }
+            .animate-fade-in {
+                animation: fadeIn 0.5s ease-in-out;
+            }
+            .scrollbar-thin {
+                scrollbar-width: thin;
+            }
+            .scrollbar-thin::-webkit-scrollbar {
+                width: 4px;
+            }
+            .scrollbar-thin::-webkit-scrollbar-thumb {
+                background-color: rgba(156, 163, 175, 0.5);
+                border-radius: 2px;
+            }
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-dark font-sans min-h-screen flex flex-col">
+    <!-- 顶部导航栏 -->
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-50">
+        <div class="container mx-auto px-4">
+            <div class="flex items-center justify-between h-16">
+                <!-- 左侧Logo和标题 -->
+                <div class="flex items-center">
+                    <div class="flex-shrink-0 flex items-center">
+                        <i class="fa fa-bar-chart text-primary text-2xl mr-2"></i>
+                        <span class="text-xl font-semibold">数据采集与处理系统</span>
+                    </div>
+                </div>
+                
+                <!-- 右侧状态和用户信息 -->
+                <div class="flex items-center space-x-4">
+                    <!-- 连接状态 -->
+                    <div class="hidden md:flex items-center space-x-2 px-3 py-1 rounded-full bg-green-50">
+                        <span id="connection-status-indicator" class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
+                        <span id="connection-status-text" class="text-sm text-success">已连接</span>
+                    </div>
+                    
+                    <!-- 系统版本 -->
+                    <div class="hidden md:block text-sm text-gray-500">v2.0</div>
+                    
+                    <!-- 用户信息 -->
+                    <div class="flex items-center space-x-2">
+                        <div class="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                            <i class="fa fa-user"></i>
+                        </div>
+                        <span class="hidden md:inline text-sm font-medium">管理员</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主要内容区 -->
+    <main class="flex-1 flex overflow-hidden">
+        <!-- 侧边栏导航 -->
+        <aside class="w-64 bg-white sidebar-shadow hidden md:block h-[calc(100vh-4rem)] sticky top-16 overflow-y-auto scrollbar-thin">
+            <nav class="py-4">
+                <div class="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    系统控制
+                </div>
+                <a href="#dashboard" class="group flex items-center px-4 py-3 text-primary bg-primary/5 border-l-4 border-primary">
+                    <i class="fa fa-tachometer w-5 h-5 mr-3"></i>
+                    <span>仪表盘</span>
+                </a>
+                <a href="#realtime" class="group flex items-center px-4 py-3 text-gray-700 hover:bg-gray-50 hover:text-primary transition-colors">
+                    <i class="fa fa-area-chart w-5 h-5 mr-3"></i>
+                    <span>实时数据</span>
+                </a>
+                <a href="#triggers" class="group flex items-center px-4 py-3 text-gray-700 hover:bg-gray-50 hover:text-primary transition-colors">
+                    <i class="fa fa-bolt w-5 h-5 mr-3"></i>
+                    <span>触发批次</span>
+                </a>
+                <a href="#files" class="group flex items-center px-4 py-3 text-gray-700 hover:bg-gray-50 hover:text-primary transition-colors">
+                    <i class="fa fa-folder-open w-5 h-5 mr-3"></i>
+                    <span>文件管理</span>
+                </a>
+                
+                <div class="px-4 py-2 mt-6 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    系统设置
+                </div>
+                <a href="#settings" class="group flex items-center px-4 py-3 text-gray-700 hover:bg-gray-50 hover:text-primary transition-colors">
+                    <i class="fa fa-cog w-5 h-5 mr-3"></i>
+                    <span>配置</span>
+                </a>
+                <a href="#about" class="group flex items-center px-4 py-3 text-gray-700 hover:bg-gray-50 hover:text-primary transition-colors">
+                    <i class="fa fa-info-circle w-5 h-5 mr-3"></i>
+                    <span>关于</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- 移动端菜单按钮 -->
+        <button id="mobile-menu-button" class="md:hidden fixed bottom-6 right-6 w-12 h-12 rounded-full bg-primary text-white shadow-lg flex items-center justify-center z-40">
+            <i class="fa fa-bars"></i>
+        </button>
+        
+        <!-- 移动端侧边栏 -->
+        <div id="mobile-sidebar" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden md:hidden">
+            <div class="h-full w-64 bg-white shadow-xl transform transition-transform">
+                <div class="flex justify-end p-4">
+                    <button id="close-mobile-menu" class="text-gray-500 hover:text-gray-700">
+                        <i class="fa fa-times text-xl"></i>
+                    </button>
+                </div>
+                <!-- 移动端导航菜单 -->
+                <nav class="py-4">
+                    <!-- 导航内容与桌面版相同 -->
+                    <div class="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        系统控制
+                    </div>
+                    <a href="#dashboard" class="mobile-nav-link group flex items-center px-4 py-3 text-primary bg-primary/5">
+                        <i class="fa fa-tachometer w-5 h-5 mr-3"></i>
+                        <span>仪表盘</span>
+                    </a>
+                    <a href="#realtime" class="mobile-nav-link group flex items-center px-4 py-3 text-gray-700 hover:bg-gray-50 hover:text-primary transition-colors">
+                        <i class="fa fa-area-chart w-5 h-5 mr-3"></i>
+                        <span>实时数据</span>
+                    </a>
+                    <a href="#triggers" class="mobile-nav-link group flex items-center px-4 py-3 text-gray-700 hover:bg-gray-50 hover:text-primary transition-colors">
+                        <i class="fa fa-bolt w-5 h-5 mr-3"></i>
+                        <span>触发批次</span>
+                    </a>
+                    <a href="#files" class="mobile-nav-link group flex items-center px-4 py-3 text-gray-700 hover:bg-gray-50 hover:text-primary transition-colors">
+                        <i class="fa fa-folder-open w-5 h-5 mr-3"></i>
+                        <span>文件管理</span>
+                    </a>
+                    
+                    <div class="px-4 py-2 mt-6 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        系统设置
+                    </div>
+                    <a href="#settings" class="mobile-nav-link group flex items-center px-4 py-3 text-gray-700 hover:bg-gray-50 hover:text-primary transition-colors">
+                        <i class="fa fa-cog w-5 h-5 mr-3"></i>
+                        <span>配置</span>
+                    </a>
+                    <a href="#about" class="mobile-nav-link group flex items-center px-4 py-3 text-gray-700 hover:bg-gray-50 hover:text-primary transition-colors">
+                        <i class="fa fa-info-circle w-5 h-5 mr-3"></i>
+                        <span>关于</span>
+                    </a>
+                </nav>
+            </div>
+        </div>
+
+        <!-- 主内容滚动区域 -->
+        <div class="flex-1 overflow-y-auto p-4 md:p-6 bg-gray-50">
+            <!-- 仪表盘部分 -->
+            <section id="dashboard" class="mb-8 animate-fade-in">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
+                    <h1 class="text-[clamp(1.5rem,3vw,2rem)] font-bold text-gray-800">系统仪表盘</h1>
+                    <div class="mt-4 md:mt-0 flex space-x-2">
+                        <button id="refresh-status" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors">
+                            <i class="fa fa-refresh mr-2"></i>刷新状态
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 系统状态卡片 -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+                    <!-- 数据采集状态 -->
+                    <div class="bg-white rounded-xl p-5 card-shadow transition-transform hover:scale-[1.02]">
+                        <div class="flex items-start justify-between">
+                            <div>
+                                <p class="text-sm font-medium text-gray-500">数据采集状态</p>
+                                <h3 id="data-collection-status" class="mt-1 text-2xl font-semibold text-danger">未激活</h3>
+                            </div>
+                            <div class="p-2 bg-danger/10 rounded-lg">
+                                <i class="fa fa-stop-circle text-danger text-xl"></i>
+                            </div>
+                        </div>
+                        <div class="mt-4 flex items-center text-sm">
+                            <span id="collection-time" class="text-gray-500">00:00:00</span>
+                        </div>
+                    </div>
+
+                    <!-- 设备连接状态 -->
+                    <div class="bg-white rounded-xl p-5 card-shadow transition-transform hover:scale-[1.02]">
+                        <div class="flex items-start justify-between">
+                            <div>
+                                <p class="text-sm font-medium text-gray-500">设备连接</p>
+                                <h3 id="device-connection-status" class="mt-1 text-2xl font-semibold text-success">已连接</h3>
+                            </div>
+                            <div class="p-2 bg-success/10 rounded-lg">
+                                <i class="fa fa-plug text-success text-xl"></i>
+                            </div>
+                        </div>
+                        <div class="mt-4 flex items-center text-sm">
+                            <span id="connection-type" class="text-gray-500">连接类型: socket</span>
+                        </div>
+                    </div>
+
+                    <!-- 工作模式 -->
+                    <div class="bg-white rounded-xl p-5 card-shadow transition-transform hover:scale-[1.02]">
+                        <div class="flex items-start justify-between">
+                            <div>
+                                <p class="text-sm font-medium text-gray-500">工作模式</p>
+                                <h3 id="working-mode" class="mt-1 text-2xl font-semibold text-primary">触发模式</h3>
+                            </div>
+                            <div class="p-2 bg-primary/10 rounded-lg">
+                                <i class="fa fa-cogs text-primary text-xl"></i>
+                            </div>
+                        </div>
+                        <div class="mt-4 flex items-center text-sm">
+                            <span id="trigger-count" class="text-gray-500">触发次数: 0</span>
+                        </div>
+                    </div>
+
+                    <!-- 系统运行时间 -->
+                    <div class="bg-white rounded-xl p-5 card-shadow transition-transform hover:scale-[1.02]">
+                        <div class="flex items-start justify-between">
+                            <div>
+                                <p class="text-sm font-medium text-gray-500">系统运行时间</p>
+                                <h3 id="system-uptime" class="mt-1 text-2xl font-semibold text-gray-800">00:00:00</h3>
+                            </div>
+                            <div class="p-2 bg-gray-100 rounded-lg">
+                                <i class="fa fa-clock-o text-gray-600 text-xl"></i>
+                            </div>
+                        </div>
+                        <div class="mt-4 flex items-center text-sm">
+                            <span id="memory-usage" class="text-gray-500">内存使用: 0 MB</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 控制按钮 -->
+                <div class="bg-white rounded-xl p-6 card-shadow mb-6">
+                    <h2 class="text-lg font-semibold mb-4">系统控制</h2>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <button id="start-collection" class="flex flex-col items-center justify-center px-4 py-5 border border-transparent rounded-lg shadow-sm text-white bg-success hover:bg-success/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-success transition-colors">
+                            <i class="fa fa-play text-xl mb-2"></i>
+                            <span>启动采集</span>
+                        </button>
+                        <button id="stop-collection" class="flex flex-col items-center justify-center px-4 py-5 border border-transparent rounded-lg shadow-sm text-white bg-danger hover:bg-danger/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-danger transition-colors">
+                            <i class="fa fa-stop text-xl mb-2"></i>
+                            <span>停止采集</span>
+                        </button>
+                        <button id="ping-device" class="flex flex-col items-center justify-center px-4 py-5 border border-transparent rounded-lg shadow-sm text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors">
+                            <i class="fa fa-rss text-xl mb-2"></i>
+                            <span>设备Ping</span>
+                        </button>
+                        <button id="device-info" class="flex flex-col items-center justify-center px-4 py-5 border border-transparent rounded-lg shadow-sm text-white bg-info hover:bg-info/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-info transition-colors">
+                            <i class="fa fa-info text-xl mb-2"></i>
+                            <span>设备信息</span>
+                        </button>
+                    </div>
+                    
+                    <div class="mt-4 grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <button id="continuous-mode" class="flex flex-col items-center justify-center px-4 py-5 border border-transparent rounded-lg shadow-sm text-white bg-secondary hover:bg-secondary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary transition-colors">
+                            <i class="fa fa-repeat text-xl mb-2"></i>
+                            <span>连续模式</span>
+                        </button>
+                        <button id="trigger-mode" class="flex flex-col items-center justify-center px-4 py-5 border border-transparent rounded-lg shadow-sm text-white bg-warning hover:bg-warning/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-warning transition-colors">
+                            <i class="fa fa-bolt text-xl mb-2"></i>
+                            <span>触发模式</span>
+                        </button>
+                        <button id="request-trigger-data" class="flex flex-col items-center justify-center px-4 py-5 border border-transparent rounded-lg shadow-sm text-white bg-dark hover:bg-dark/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-dark transition-colors">
+                            <i class="fa fa-download text-xl mb-2"></i>
+                            <span>请求触发数据</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 系统统计 -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                    <div class="bg-white rounded-xl p-6 card-shadow">
+                        <h2 class="text-lg font-semibold mb-4">数据包处理统计</h2>
+                        <div class="flex items-end justify-between mb-2">
+                            <span class="text-gray-500">已处理数据包</span>
+                            <span id="packets-processed" class="text-2xl font-bold text-primary">0</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2.5">
+                            <div id="packets-progress" class="bg-primary h-2.5 rounded-full" style="width: 0%"></div>
+                        </div>
+                        <div class="mt-6 grid grid-cols-2 gap-4">
+                            <div class="bg-gray-50 p-4 rounded-lg">
+                                <p class="text-sm text-gray-500">WebSocket客户端</p>
+                                <p id="connected-clients" class="text-2xl font-bold text-gray-800">0</p>
+                            </div>
+                            <div class="bg-gray-50 p-4 rounded-lg">
+                                <p class="text-sm text-gray-500">缓存触发批次</p>
+                                <p id="cached-bursts" class="text-2xl font-bold text-gray-800">0</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-white rounded-xl p-6 card-shadow">
+                        <h2 class="text-lg font-semibold mb-4">触发状态</h2>
+                        <div class="flex items-center justify-between mb-6">
+                            <div>
+                                <p class="text-sm text-gray-500">当前触发状态</p>
+                                <p id="current-burst-status" class="text-xl font-bold text-danger">未激活</p>
+                            </div>
+                            <div id="burst-indicator" class="w-10 h-10 rounded-full bg-danger/10 flex items-center justify-center">
+                                <i class="fa fa-circle text-danger"></i>
+                            </div>
+                        </div>
+                        <div class="space-y-4">
+                            <div>
+                                <div class="flex justify-between text-sm mb-1">
+                                    <span class="text-gray-500">最后触发时间</span>
+                                    <span id="last-trigger-time" class="text-gray-700">-</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2"></div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-sm mb-1">
+                                    <span class="text-gray-500">总触发次数</span>
+                                    <span id="total-triggers" class="text-gray-700">0</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    <div id="triggers-progress" class="bg-warning h-2 rounded-full" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 实时数据部分 -->
+            <section id="realtime" class="mb-8 animate-fade-in">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
+                    <h1 class="text-[clamp(1.5rem,3vw,2rem)] font-bold text-gray-800">实时数据</h1>
+                    <div class="mt-4 md:mt-0 flex space-x-2">
+                        <button id="connect-websocket" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors">
+                            <i class="fa fa-plug mr-2"></i>连接WebSocket
+                        </button>
+                        <div class="relative">
+                            <select id="data-channel-select" class="block pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm rounded-md">
+                                <option value="all">所有通道</option>
+                                <option value="0">通道 0</option>
+                                <option value="1">通道 1</option>
+                                <option value="2">通道 2</option>
+                                <option value="3">通道 3</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- WebSocket连接状态 -->
+                <div id="websocket-status" class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
+                    <div class="flex">
+                        <div class="flex-shrink-0">
+                            <i class="fa fa-exclamation-triangle text-yellow-400"></i>
+                        </div>
+                        <div class="ml-3">
+                            <p class="text-sm text-yellow-700">
+                                WebSocket未连接，请点击"连接WebSocket"按钮开始接收实时数据。
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 实时图表 -->
+                <div class="bg-white rounded-xl p-6 card-shadow mb-6">
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
+                        <h2 class="text-lg font-semibold">实时数据波形</h2>
+                        <div class="mt-2 md:mt-0 flex space-x-2">
+                            <button id="pause-chart" class="inline-flex items-center px-3 py-1 border border-gray-300 rounded-md shadow-sm text-xs font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
+                                <i class="fa fa-pause mr-1"></i>暂停
+                            </button>
+                            <button id="clear-chart" class="inline-flex items-center px-3 py-1 border border-gray-300 rounded-md shadow-sm text-xs font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
+                                <i class="fa fa-trash mr-1"></i>清除
+                            </button>
+                        </div>
+                    </div>
+                    <div class="h-[400px]">
+                        <canvas id="realtime-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 数据统计 -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div class="bg-white rounded-xl p-5 card-shadow">
+                        <p class="text-sm font-medium text-gray-500">采样率</p>
+                        <h3 id="sample-rate" class="mt-1 text-2xl font-semibold text-gray-800">0 Hz</h3>
+                        <div class="mt-4 text-sm text-gray-500">
+                            <span>当前通道: </span>
+                            <span id="current-channel" class="font-medium">0</span>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 card-shadow">
+                        <p class="text-sm font-medium text-gray-500">数据点计数</p>
+                        <h3 id="data-points" class="mt-1 text-2xl font-semibold text-gray-800">0</h3>
+                        <div class="mt-4 text-sm text-gray-500">
+                            <span>数据包: </span>
+                            <span id="data-packets" class="font-medium">0</span>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 card-shadow">
+                        <p class="text-sm font-medium text-gray-500">最小值</p>
+                        <h3 id="min-value" class="mt-1 text-2xl font-semibold text-blue-500">0.00</h3>
+                        <div class="mt-4 text-sm text-gray-500">
+                            <span>最大值: </span>
+                            <span id="max-value" class="font-medium text-red-500">0.00</span>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 card-shadow">
+                        <p class="text-sm font-medium text-gray-500">平均值</p>
+                        <h3 id="avg-value" class="mt-1 text-2xl font-semibold text-green-500">0.00</h3>
+                        <div class="mt-4 text-sm text-gray-500">
+                            <span>处理时间: </span>
+                            <span id="processing-time" class="font-medium">0 μs</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 触发批次部分 -->
+            <section id="triggers" class="mb-8 animate-fade-in">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
+                    <h1 class="text-[clamp(1.5rem,3vw,2rem)] font-bold text-gray-800">触发批次管理</h1>
+                    <div class="mt-4 md:mt-0 flex space-x-2">
+                        <button id="refresh-triggers" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors">
+                            <i class="fa fa-refresh mr-2"></i>刷新列表
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 触发批次列表 -->
+                <div class="bg-white rounded-xl p-6 card-shadow mb-6">
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">批次ID</th>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">触发时间</th>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">通道</th>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">采样数</th>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">持续时间</th>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">质量</th>
+                                    <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="triggers-list" class="bg-white divide-y divide-gray-200">
+                                <!-- 触发批次数据将通过JavaScript动态加载 -->
+                                <tr>
+                                    <td colspan="7" class="px-6 py-10 text-center text-gray-500">
+                                        <div class="flex flex-col items-center">
+                                            <i class="fa fa-bolt text-gray-300 text-3xl mb-2"></i>
+                                            <p>暂无触发批次数据</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 文件管理部分 -->
+            <section id="files" class="mb-8 animate-fade-in">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
+                    <h1 class="text-[clamp(1.5rem,3vw,2rem)] font-bold text-gray-800">文件管理</h1>
+                    <div class="mt-4 md:mt-0 flex space-x-2">
+                        <button id="refresh-files" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors">
+                            <i class="fa fa-refresh mr-2"></i>刷新文件
+                        </button>
+                        <button id="upload-file" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors">
+                            <i class="fa fa-upload mr-2"></i>上传文件
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 文件列表 -->
+                <div class="bg-white rounded-xl p-6 card-shadow">
+                    <div class="mb-4">
+                        <div class="flex items-center">
+                            <i class="fa fa-folder-open text-primary mr-2"></i>
+                            <span id="current-directory" class="font-medium">根目录</span>
+                            <button id="go-to-parent" class="ml-2 text-gray-500 hover:text-gray-700" disabled="">
+                                <i class="fa fa-arrow-up"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">文件名</th>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">类型</th>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">大小</th>
+                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">创建时间</th>
+                                    <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="files-list" class="bg-white divide-y divide-gray-200">
+                                <!-- 文件数据将通过JavaScript动态加载 -->
+                                <tr>
+                                    <td colspan="5" class="px-6 py-10 text-center text-gray-500">
+                                        <div class="flex flex-col items-center">
+                                            <i class="fa fa-file text-gray-300 text-3xl mb-2"></i>
+                                            <p>暂无文件数据</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 配置部分 -->
+            <section id="settings" class="mb-8 animate-fade-in">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
+                    <h1 class="text-[clamp(1.5rem,3vw,2rem)] font-bold text-gray-800">系统配置</h1>
+                </div>
+
+                <!-- 系统配置表单 -->
+                <div class="bg-white rounded-xl p-6 card-shadow mb-6">
+                    <h2 class="text-lg font-semibold mb-6">数据流配置</h2>
+                    
+                    <form id="stream-config-form">
+                        <div id="channels-container" class="space-y-6 mb-6">
+                            <div class="channel-config bg-gray-50 p-4 rounded-lg">
+                                <div class="flex items-center justify-between mb-4">
+                                    <h3 class="font-medium">通道 0</h3>
+                                    <button type="button" class="text-danger hover:text-danger/80 remove-channel">
+                                        <i class="fa fa-trash"></i>
+                                    </button>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label for="sample-rate-0" class="block text-sm font-medium text-gray-700 mb-1">采样率 (Hz)</label>
+                                        <input type="number" id="sample-rate-0" name="sample-rate-0" value="10000" min="1" max="100000" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md">
+                                    </div>
+                                    <div>
+                                        <label for="format-0" class="block text-sm font-medium text-gray-700 mb-1">数据格式</label>
+                                        <select id="format-0" name="format-0" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md">
+                                            <option value="1">int16</option>
+                                            <option value="2">int32</option>
+                                            <option value="4">float32</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="channel-config bg-gray-50 p-4 rounded-lg">
+                                <div class="flex items-center justify-between mb-4">
+                                    <h3 class="font-medium">通道 1</h3>
+                                    <button type="button" class="text-danger hover:text-danger/80 remove-channel">
+                                        <i class="fa fa-trash"></i>
+                                    </button>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label for="sample-rate-1" class="block text-sm font-medium text-gray-700 mb-1">采样率 (Hz)</label>
+                                        <input type="number" id="sample-rate-1" name="sample-rate-1" value="10000" min="1" max="100000" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md">
+                                    </div>
+                                    <div>
+                                        <label for="format-1" class="block text-sm font-medium text-gray-700 mb-1">数据格式</label>
+                                        <select id="format-1" name="format-1" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md">
+                                            <option value="1">int16</option>
+                                            <option value="2">int32</option>
+                                            <option value="4">float32</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <button type="button" id="add-channel" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors mb-6">
+                            <i class="fa fa-plus mr-2"></i>添加通道
+                        </button>
+                        
+                        <div class="flex justify-end">
+                            <button type="submit" class="inline-flex items-center px-6 py-3 border border-transparent rounded-md shadow-sm text-base font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors">
+                                <i class="fa fa-save mr-2"></i>保存配置
+                            </button>
+                        </div>
+                    </form>
+                </div>
+                
+                <!-- 连接设置 -->
+                <div class="bg-white rounded-xl p-6 card-shadow">
+                    <h2 class="text-lg font-semibold mb-6">连接设置</h2>
+                    
+                    <form id="connection-settings-form">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                            <div>
+                                <label for="http-api-url" class="block text-sm font-medium text-gray-700 mb-1">HTTP API 地址</label>
+                                <input type="text" id="http-api-url" name="http-api-url" value="http://127.0.0.1:8080" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md">
+                            </div>
+                            <div>
+                                <label for="websocket-url" class="block text-sm font-medium text-gray-700 mb-1">WebSocket 地址</label>
+                                <input type="text" id="websocket-url" name="websocket-url" value="ws://127.0.0.1:8081" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md">
+                            </div>
+                        </div>
+                        
+                        <div class="flex justify-end">
+                            <button type="submit" class="inline-flex items-center px-6 py-3 border border-transparent rounded-md shadow-sm text-base font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors">
+                                <i class="fa fa-save mr-2"></i>保存设置
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- 关于部分 -->
+            <section id="about" class="mb-8 animate-fade-in">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
+                    <h1 class="text-[clamp(1.5rem,3vw,2rem)] font-bold text-gray-800">关于系统</h1>
+                </div>
+
+                <div class="bg-white rounded-xl p-6 card-shadow">
+                    <div class="flex flex-col md:flex-row items-center">
+                        <div class="mb-6 md:mb-0 md:mr-8">
+                            <div class="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center">
+                                <i class="fa fa-bar-chart text-primary text-4xl"></i>
+                            </div>
+                        </div>
+                        <div class="md:flex-1">
+                            <h2 class="text-2xl font-bold mb-2">数据采集与处理系统</h2>
+                            <p class="text-gray-600 mb-4">高性能数据采集与处理系统，支持实时数据流传输和触发模式数据采集。</p>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <p class="text-sm text-gray-500">版本</p>
+                                    <p class="font-medium">v2.0</p>
+                                </div>
+                                <div>
+                                    <p class="text-sm text-gray-500">更新日期</p>
+                                    <p class="font-medium">2024-01-01</p>
+                                </div>
+                                <div>
+                                    <p class="text-sm text-gray-500">健康状态</p>
+                                    <p class="font-medium text-success">正常</p>
+                                </div>
+                                <div>
+                                    <p class="text-sm text-gray-500">WebSocket支持</p>
+                                    <p class="font-medium text-success">已启用</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-8 pt-6 border-t border-gray-200">
+                        <h3 class="text-lg font-semibold mb-4">系统特性</h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                            <div class="flex items-start">
+                                <div class="flex-shrink-0 h-6 w-6 text-success">
+                                    <i class="fa fa-check-circle"></i>
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm font-medium">连续采集模式</p>
+                                </div>
+                            </div>
+                            <div class="flex items-start">
+                                <div class="flex-shrink-0 h-6 w-6 text-success">
+                                    <i class="fa fa-check-circle"></i>
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm font-medium">触发采集模式</p>
+                                </div>
+                            </div>
+                            <div class="flex items-start">
+                                <div class="flex-shrink-0 h-6 w-6 text-success">
+                                    <i class="fa fa-check-circle"></i>
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm font-medium">WebSocket实时流</p>
+                                </div>
+                            </div>
+                            <div class="flex items-start">
+                                <div class="flex-shrink-0 h-6 w-6 text-success">
+                                    <i class="fa fa-check-circle"></i>
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm font-medium">文件管理系统</p>
+                                </div>
+                            </div>
+                            <div class="flex items-start">
+                                <div class="flex-shrink-0 h-6 w-6 text-success">
+                                    <i class="fa fa-check-circle"></i>
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm font-medium">实时数据处理</p>
+                                </div>
+                            </div>
+                            <div class="flex items-start">
+                                <div class="flex-shrink-0 h-6 w-6 text-success">
+                                    <i class="fa fa-check-circle"></i>
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm font-medium">触发数据管理</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- 模态框：触发批次预览 -->
+    <div id="trigger-preview-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col animate-fade-in">
+            <div class="flex items-center justify-between p-6 border-b border-gray-200">
+                <h3 id="modal-title" class="text-lg font-semibold">触发批次预览</h3>
+                <button id="close-modal" class="text-gray-500 hover:text-gray-700">
+                    <i class="fa fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-6">
+                <div id="trigger-preview-content">
+                    <!-- 触发批次预览内容将通过JavaScript动态加载 -->
+                </div>
+            </div>
+            <div class="p-6 border-t border-gray-200 flex justify-end space-x-3">
+                <button id="close-preview-btn" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors">
+                    关闭
+                </button>
+                <button id="save-trigger-btn" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors">
+                    <i class="fa fa-save mr-2"></i>保存批次
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 模态框：保存触发批次 -->
+    <div id="save-trigger-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl w-full max-w-md overflow-hidden flex flex-col animate-fade-in">
+            <div class="flex items-center justify-between p-6 border-b border-gray-200">
+                <h3 class="text-lg font-semibold">保存触发批次</h3>
+                <button id="close-save-modal" class="text-gray-500 hover:text-gray-700">
+                    <i class="fa fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="flex-1 p-6">
+                <form id="save-trigger-form">
+                    <input type="hidden" id="save-burst-id" value="">
+                    <div class="mb-4">
+                        <label for="save-dir" class="block text-sm font-medium text-gray-700 mb-1">保存目录</label>
+                        <input type="text" id="save-dir" name="save-dir" value="experiments/vibration_test" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md">
+                    </div>
+                    <div class="mb-4">
+                        <label for="save-filename" class="block text-sm font-medium text-gray-700 mb-1">文件名</label>
+                        <input type="text" id="save-filename" name="save-filename" value="impact_measurement_001" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md">
+                    </div>
+                    <div class="mb-4">
+                        <label for="save-format" class="block text-sm font-medium text-gray-700 mb-1">文件格式</label>
+                        <select id="save-format" name="save-format" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md">
+                            <option value="csv">CSV</option>
+                            <option value="json">JSON</option>
+                            <option value="binary">Binary</option>
+                        </select>
+                    </div>
+                    <div class="mb-4">
+                        <label for="save-description" class="block text-sm font-medium text-gray-700 mb-1">描述</label>
+                        <textarea id="save-description" name="save-description" rows="3" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md">50Hz振动冲击测试数据</textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="p-6 border-t border-gray-200 flex justify-end space-x-3">
+                <button id="cancel-save-btn" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors">
+                    取消
+                </button>
+                <button id="confirm-save-btn" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors">
+                    <i class="fa fa-check mr-2"></i>确认保存
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 通知提示 -->
+    <div id="notification" class="fixed top-4 right-4 max-w-sm w-full bg-white shadow-lg rounded-lg overflow-hidden transform transition-all duration-300 translate-x-full z-50">
+        <div class="p-4 flex">
+            <div id="notification-icon" class="flex-shrink-0">
+                <i class="fa fa-check-circle text-success text-xl"></i>
+            </div>
+            <div class="ml-3">
+                <p id="notification-title" class="text-sm font-medium text-gray-800">操作成功</p>
+                <p id="notification-message" class="mt-1 text-sm text-gray-500">您的操作已成功完成。</p>
+            </div>
+            <button id="close-notification" class="ml-auto flex-shrink-0 text-gray-400 hover:text-gray-500">
+                <i class="fa fa-times"></i>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // 全局变量
+        let ws = null;
+        let realtimeChart = null;
+        let chartData = {
+            labels: [],
+            datasets: [
+                {
+                    label: '通道 0',
+                    data: [],
+                    borderColor: '#165DFF',
+                    backgroundColor: 'rgba(22, 93, 255, 0.1)',
+                    borderWidth: 1,
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: '通道 1',
+                    data: [],
+                    borderColor: '#36CFC9',
+                    backgroundColor: 'rgba(54, 207, 201, 0.1)',
+                    borderWidth: 1,
+                    fill: false,
+                    tension: 0.1
+                }
+            ]
+        };
+        let chartPaused = false;
+        let currentDirectory = '';
+        let selectedBurstId = '';
+        let collectionStartTime = null;
+        let collectionTimer = null;
+
+        // DOM 元素加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initRealtimeChart();
+            loadSystemStatus();
+            loadTriggersList();
+            loadFilesList();
+            bindEventHandlers();
+        });
+
+        // 初始化实时数据图表
+        function initRealtimeChart() {
+            const ctx = document.getElementById('realtime-chart').getContext('2d');
+            realtimeChart = new Chart(ctx, {
+                type: 'line',
+                data: chartData,
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: '时间' }, ticks: { maxTicksLimit: 10 } },
+                        y: { title: { display: true, text: '数值' }, suggestedMin: -5, suggestedMax: 5 }
+                    },
+                    plugins: { legend: { position: 'top' }, tooltip: { mode: 'index', intersect: false } },
+                    interaction: { mode: 'nearest', axis: 'x', intersect: false },
+                    animation: { duration: 0 }
+                }
+            });
+        }
+
+        // --- API 调用函数 ---
+
+        function getApiBaseUrl() {
+            return document.getElementById('http-api-url').value;
+        }
+
+        // 加载系统状态
+        async function loadSystemStatus() {
+            try {
+                const response = await fetch(`${getApiBaseUrl()}/api/control/status`);
+                const result = await response.json();
+                if (result.success) {
+                    updateSystemStatus(result.data);
+                } else {
+                    showNotification('获取状态失败', result.error, 'error');
+                }
+            } catch (error) {
+                console.error('Failed to load system status:', error);
+                showNotification('网络错误', '无法连接到API获取状态。', 'error');
+            }
+        }
+
+        // 加载触发批次列表
+        async function loadTriggersList() {
+            try {
+                const response = await fetch(`${getApiBaseUrl()}/api/trigger/list`);
+                const result = await response.json();
+                if (result.success) {
+                    updateTriggersList(result.data);
+                } else {
+                    showNotification('加载触发列表失败', result.error, 'error');
+                }
+            } catch (error) {
+                console.error('Failed to load triggers list:', error);
+                showNotification('网络错误', '无法获取触发批次列表。', 'error');
+            }
+        }
+        
+        // 加载文件列表
+        async function loadFilesList(dir = '') {
+            currentDirectory = dir;
+            document.getElementById('current-directory').textContent = dir || '根目录';
+            document.getElementById('go-to-parent').disabled = !dir;
+
+            let url = `${getApiBaseUrl()}/api/files`;
+            if (dir) {
+                url += `?dir=${encodeURIComponent(dir)}`;
+            }
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP 错误！状态: ${response.status}`);
+                }
+                const result = await response.json();
+                if (result.success) {
+                    updateFilesList(result.data);
+                } else {
+                    showNotification('加载文件列表失败', result.error, 'error');
+                }
+            } catch (error) {
+                console.error('Failed to load files list:', error);
+                showNotification('网络错误', `无法获取文件列表。(${error.message})`, 'error');
+            }
+        }
+
+        // 预览触发批次
+        async function previewTriggerBurst(burstId) {
+            try {
+                const response = await fetch(`${getApiBaseUrl()}/api/trigger/preview/${burstId}`);
+                const result = await response.json();
+                if (result.success) {
+                    displayTriggerPreview(result.data);
+                    selectedBurstId = burstId;
+                    document.getElementById('trigger-preview-modal').classList.remove('hidden');
+                } else {
+                    showNotification('加载预览失败', result.error, 'error');
+                }
+            } catch (error) {
+                console.error(`Failed to load preview for ${burstId}:`, error);
+                showNotification('网络错误', `无法获取批次 ${burstId} 的预览。`, 'error');
+            }
+        }
+
+        // 保存触发批次
+        async function saveTriggerBurst() {
+            const burstId = document.getElementById('save-burst-id').value;
+            const payload = {
+                dir: document.getElementById('save-dir').value,
+                filename: document.getElementById('save-filename').value,
+                format: document.getElementById('save-format').value,
+                description: document.getElementById('save-description').value,
+            };
+
+            try {
+                const response = await fetch(`${getApiBaseUrl()}/api/trigger/save/${burstId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (result.success) {
+                    document.getElementById('save-trigger-modal').classList.add('hidden');
+                    showNotification('保存成功', `批次已保存至 ${result.data.saved_path}`, 'success');
+                    loadTriggersList();
+                } else {
+                    showNotification('保存失败', result.error, 'error');
+                }
+            } catch (error) {
+                console.error('Failed to save trigger burst:', error);
+                showNotification('网络错误', '无法保存触发批次。', 'error');
+            }
+        }
+
+        // 删除触发批次
+        async function deleteTriggerBurst(burstId) {
+            if (!confirm(`确定要删除触发批次 ${burstId} 吗？此操作不可撤销。`)) {
+                return;
+            }
+            try {
+                const response = await fetch(`${getApiBaseUrl()}/api/trigger/delete/${burstId}`, {
+                    method: 'DELETE'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showNotification('删除成功', `触发批次 ${burstId} 已删除。`, 'success');
+                    loadTriggersList();
+                } else {
+                    showNotification('删除失败', result.error, 'error');
+                }
+            } catch (error) {
+                console.error('Failed to delete trigger burst:', error);
+                showNotification('网络错误', '无法删除触发批次。', 'error');
+            }
+        }
+
+        // 下载文件
+        function downloadFile(filePath) {
+            const downloadUrl = `${getApiBaseUrl()}/api/files/${encodeURIComponent(filePath)}`;
+            window.open(downloadUrl, '_blank');
+            showNotification('下载开始', `文件 ${filePath} 的下载已开始。`, 'success');
+        }
+
+        // 删除文件 (假设存在一个未在文档中说明的 DELETE 端点)
+        async function deleteFile(filePath) {
+            if (!confirm(`确定要删除文件 ${filePath} 吗？此操作不可撤销。`)) {
+                return;
+            }
+            try {
+                const response = await fetch(`${getApiBaseUrl()}/api/files/${encodeURIComponent(filePath)}`, {
+                    method: 'DELETE'
+                });
+                if (response.ok) {
+                    showNotification('删除成功', `文件 ${filePath} 已被删除。`, 'success');
+                    loadFilesList(currentDirectory);
+                } else {
+                    const result = await response.json().catch(() => ({ error: '删除文件失败。' }));
+                    showNotification('删除失败', result.error, 'error');
+                }
+            } catch (error) {
+                console.error('Failed to delete file:', error);
+                showNotification('网络错误', '无法删除文件。', 'error');
+            }
+        }
+
+        // 保存数据流配置
+        async function saveStreamConfig(e) {
+            e.preventDefault();
+            const channels = [];
+            document.querySelectorAll('.channel-config').forEach((channel, index) => {
+                channels.push({
+                    channel_id: index,
+                    sample_rate: parseInt(channel.querySelector(`#sample-rate-${index}`).value),
+                    format: parseInt(channel.querySelector(`#format-${index}`).value)
+                });
+            });
+            try {
+                const response = await fetch(`${getApiBaseUrl()}/api/control/configure`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channels })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showNotification('配置已保存', '数据流配置已成功应用。', 'success');
+                } else {
+                    showNotification('保存失败', result.error, 'error');
+                }
+            } catch (error) {
+                console.error('Failed to save stream config:', error);
+                showNotification('网络错误', '无法保存数据流配置。', 'error');
+            }
+        }
+        
+        // --- UI 更新函数 (基本不变) ---
+
+        // 更新系统状态显示
+        function updateSystemStatus(status) {
+            const collectionStatusEl = document.getElementById('data-collection-status');
+            const collectionIconContainer = collectionStatusEl.parentElement.nextElementSibling;
+
+            if (status.data_collection_active) {
+                collectionStatusEl.textContent = '已激活';
+                collectionStatusEl.className = 'mt-1 text-2xl font-semibold text-success';
+                if(collectionIconContainer) collectionIconContainer.innerHTML = '<i class="fa fa-play-circle text-success text-xl"></i>';
+                
+                if (!collectionStartTime) {
+                    collectionStartTime = new Date();
+                    startCollectionTimer();
+                }
+            } else {
+                collectionStatusEl.textContent = '未激活';
+                collectionStatusEl.className = 'mt-1 text-2xl font-semibold text-danger';
+                if(collectionIconContainer) collectionIconContainer.innerHTML = '<i class="fa fa-stop-circle text-danger text-xl"></i>';
+
+                if (collectionStartTime) {
+                    collectionStartTime = null;
+                    stopCollectionTimer();
+                    document.getElementById('collection-time').textContent = '00:00:00';
+                }
+            }
+            
+            const deviceStatusEl = document.getElementById('device-connection-status');
+            if (status.device_connected) {
+                deviceStatusEl.textContent = '已连接';
+                deviceStatusEl.className = 'mt-1 text-2xl font-semibold text-success';
+                document.getElementById('connection-status-indicator').className = 'w-2 h-2 rounded-full bg-success animate-pulse';
+                document.getElementById('connection-status-text').textContent = '已连接';
+            } else {
+                deviceStatusEl.textContent = '未连接';
+                deviceStatusEl.className = 'mt-1 text-2xl font-semibold text-danger';
+                document.getElementById('connection-status-indicator').className = 'w-2 h-2 rounded-full bg-danger';
+                document.getElementById('connection-status-text').textContent = '未连接';
+            }
+            
+            document.getElementById('connection-type').textContent = `连接类型: ${status.connection_type}`;
+            
+            const modeEl = document.getElementById('working-mode');
+            if (status.current_mode === 'continuous') {
+                modeEl.textContent = '连续模式';
+                modeEl.className = 'mt-1 text-2xl font-semibold text-secondary';
+            } else {
+                modeEl.textContent = '触发模式';
+                modeEl.className = 'mt-1 text-2xl font-semibold text-primary';
+            }
+            
+            document.getElementById('trigger-count').textContent = `触发次数: ${status.trigger_status.total_triggers_received}`;
+            document.getElementById('system-uptime').textContent = formatSeconds(status.uptime_seconds);
+            document.getElementById('memory-usage').textContent = `内存使用: ${status.memory_usage_mb.toFixed(1)} MB`;
+            document.getElementById('packets-processed').textContent = status.packets_processed.toLocaleString();
+            document.getElementById('packets-progress').style.width = `${(status.packets_processed % 10000) / 100}%`;
+            document.getElementById('connected-clients').textContent = status.connected_clients;
+            document.getElementById('cached-bursts').textContent = status.trigger_status.cached_bursts;
+            
+            const burstStatusEl = document.getElementById('current-burst-status');
+            const burstIndicatorEl = document.getElementById('burst-indicator');
+            if (status.trigger_status.current_burst_active) {
+                burstStatusEl.textContent = '已激活';
+                burstStatusEl.className = 'text-xl font-bold text-success';
+                burstIndicatorEl.className = 'w-10 h-10 rounded-full bg-success/10 flex items-center justify-center';
+                burstIndicatorEl.innerHTML = '<i class="fa fa-circle text-success animate-pulse"></i>';
+            } else {
+                burstStatusEl.textContent = '未激活';
+                burstStatusEl.className = 'text-xl font-bold text-danger';
+                burstIndicatorEl.className = 'w-10 h-10 rounded-full bg-danger/10 flex items-center justify-center';
+                burstIndicatorEl.innerHTML = '<i class="fa fa-circle text-danger"></i>';
+            }
+            
+            if (status.trigger_status.last_trigger_timestamp > 0) {
+                document.getElementById('last-trigger-time').textContent = new Date(status.trigger_status.last_trigger_timestamp * 1000).toLocaleString();
+            } else {
+                document.getElementById('last-trigger-time').textContent = '-';
+            }
+            
+            document.getElementById('total-triggers').textContent = status.trigger_status.total_triggers_received;
+            document.getElementById('triggers-progress').style.width = `${status.trigger_status.total_triggers_received % 100}%`;
+        }
+
+        // 更新触发批次列表显示
+        function updateTriggersList(triggers) {
+            const listEl = document.getElementById('triggers-list');
+            if (!triggers || triggers.length === 0) {
+                listEl.innerHTML = `<tr><td colspan="7" class="px-6 py-10 text-center text-gray-500"><div class="flex flex-col items-center"><i class="fa fa-bolt text-gray-300 text-3xl mb-2"></i><p>暂无触发批次数据</p></div></td></tr>`;
+                return;
+            }
+            
+            let html = '';
+            triggers.forEach(trigger => {
+                const triggerDate = new Date(trigger.trigger_timestamp * 1000);
+                let qualityClass = 'bg-green-100 text-green-800';
+                if (trigger.quality === 'Warning') qualityClass = 'bg-yellow-100 text-yellow-800';
+                else if (trigger.quality === 'Error') qualityClass = 'bg-red-100 text-red-800';
+                
+                html += `
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${trigger.burst_id}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${triggerDate.toLocaleString()}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${trigger.trigger_channel}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${trigger.total_samples}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${trigger.duration_ms} ms</td>
+                        <td class="px-6 py-4 whitespace-nowrap"><span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${qualityClass}">${trigger.quality}</span></td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <button data-burst-id="${trigger.burst_id}" class="text-primary hover:text-primary/80 mr-3 preview-trigger"><i class="fa fa-eye mr-1"></i>预览</button>
+                            ${trigger.can_save ? `<button data-burst-id="${trigger.burst_id}" class="text-success hover:text-success/80 mr-3 save-trigger"><i class="fa fa-save mr-1"></i>保存</button>` : ''}
+                            <button data-burst-id="${trigger.burst_id}" class="text-danger hover:text-danger/80 delete-trigger"><i class="fa fa-trash mr-1"></i>删除</button>
+                        </td>
+                    </tr>`;
+            });
+            listEl.innerHTML = html;
+            
+            document.querySelectorAll('.preview-trigger').forEach(btn => btn.addEventListener('click', () => previewTriggerBurst(btn.dataset.burstId)));
+            document.querySelectorAll('.save-trigger').forEach(btn => btn.addEventListener('click', () => openSaveTriggerModal(btn.dataset.burstId)));
+            document.querySelectorAll('.delete-trigger').forEach(btn => btn.addEventListener('click', () => deleteTriggerBurst(btn.dataset.burstId)));
+        }
+
+        // 显示触发批次预览
+        function displayTriggerPreview(triggerData) {
+            document.getElementById('modal-title').textContent = `触发批次预览: ${triggerData.burst_id}`;
+            const contentEl = document.getElementById('trigger-preview-content');
+            
+            const triggerDate = new Date(triggerData.trigger_timestamp * 1000);
+            const createdAtDate = new Date(triggerData.created_at);
+            
+            let html = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                    <div class="bg-gray-50 p-4 rounded-lg">
+                        <h4 class="font-medium mb-3">基本信息</h4>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between"><span class="text-gray-500">批次ID:</span><span class="font-medium">${triggerData.burst_id}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">触发时间:</span><span>${triggerDate.toLocaleString()}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">创建时间:</span><span>${createdAtDate.toLocaleString()}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">触发通道:</span><span>${triggerData.trigger_channel}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">总采样数:</span><span>${triggerData.total_samples}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">前采样数:</span><span>${triggerData.pre_samples}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">后采样数:</span><span>${triggerData.post_samples}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">完成状态:</span><span>${triggerData.is_complete ? '已完成' : '未完成'}</span></div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-lg">
+                        <h4 class="font-medium mb-3">质量信息</h4>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between"><span class="text-gray-500">总体质量:</span><span>${getQualityBadge(triggerData.quality_summary.overall_quality.status)}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">数值范围:</span><span>${triggerData.quality_summary.value_range[0]} - ${triggerData.quality_summary.value_range[1]}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">异常计数:</span><span>${triggerData.quality_summary.anomaly_count}</span></div>
+                        </div>
+                        <h4 class="font-medium mt-4 mb-3">通道统计</h4>
+                        <div class="space-y-3">${triggerData.quality_summary.channel_stats.map(stat => `<div class="p-2 bg-white rounded"><div class="font-medium mb-1">通道 ${stat.channel_id}</div><div class="grid grid-cols-2 gap-2 text-xs"><div>采样数: ${stat.sample_count}</div><div>最小值: ${stat.min_value}</div><div>最大值: ${stat.max_value}</div><div>平均值: ${stat.avg_value}</div><div>RMS值: ${stat.rms_value}</div></div></div>`).join('')}</div>
+                    </div>
+                </div>
+                <div class="mb-6">
+                    <h4 class="font-medium mb-3">数据波形</h4>
+                    <div class="h-[300px] bg-gray-50 p-4 rounded-lg"><canvas id="trigger-chart"></canvas></div>
+                </div>`;
+            contentEl.innerHTML = html;
+            
+            const ctx = document.getElementById('trigger-chart').getContext('2d');
+            const datasets = [];
+            if(triggerData.data_packets.length > 0) {
+                const packet = triggerData.data_packets[0];
+                const channelCount = packet.channel_count;
+                const dataByChannel = Array.from({length: channelCount}, () => []);
+                packet.data.forEach((value, index) => {
+                    dataByChannel[index % channelCount].push(value);
+                });
+
+                datasets.push(...dataByChannel.map((data, i) => ({
+                    label: `通道 ${i}`,
+                    data: data,
+                    borderColor: i === 0 ? '#165DFF' : '#36CFC9',
+                    backgroundColor: i === 0 ? 'rgba(22, 93, 255, 0.1)' : 'rgba(54, 207, 201, 0.1)',
+                    borderWidth: 1, fill: false, tension: 0.1
+                })));
+            }
+
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: datasets.length > 0 ? Array.from({length: datasets[0].data.length}, (_, i) => i) : [],
+                    datasets: datasets
+                },
+                options: { responsive: true, maintainAspectRatio: false, scales: { x: { title: { display: true, text: '样本索引' } }, y: { title: { display: true, text: '数值' } } }, plugins: { legend: { position: 'top' } } }
+            });
+        }
+
+        // 更新文件列表显示
+        function updateFilesList(files) {
+            const listEl = document.getElementById('files-list');
+            if (!files || files.length === 0) {
+                listEl.innerHTML = `<tr><td colspan="5" class="px-6 py-10 text-center text-gray-500"><div class="flex flex-col items-center"><i class="fa fa-file text-gray-300 text-3xl mb-2"></i><p>当前目录没有文件</p></div></td></tr>`;
+                return;
+            }
+            
+            let html = '';
+            files.forEach(file => {
+                const createdAtDate = new Date(file.created_at);
+                let fileSize = (file.file_type === 'directory') ? '-' : (file.size_bytes < 1024) ? `${file.size_bytes} B` : (file.size_bytes < 1024 * 1024) ? `${(file.size_bytes / 1024).toFixed(1)} KB` : `${(file.size_bytes / (1024 * 1024)).toFixed(1)} MB`;
+                let fileIcon = (file.file_type === 'directory') ? '<i class="fa fa-folder text-warning mr-2"></i>' : (file.filename.endsWith('.bin')) ? '<i class="fa fa-file-o text-gray-500 mr-2"></i>' : (file.filename.endsWith('.csv')) ? '<i class="fa fa-file-text-o text-green-500 mr-2"></i>' : (file.filename.endsWith('.json')) ? '<i class="fa fa-file-code-o text-purple-500 mr-2"></i>' : '<i class="fa fa-file-o text-gray-400 mr-2"></i>';
+                const filePath = file.filename;
+                const displayName = filePath.includes('/') ? filePath.substring(filePath.lastIndexOf('/') + 1) : filePath;
+
+                html += `
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 whitespace-nowrap"><div class="flex items-center">${fileIcon}<span class="text-sm font-medium text-gray-900 ${file.file_type === 'directory' ? 'text-warning' : ''}">${displayName}</span></div></td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${file.file_type}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${fileSize}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${createdAtDate.toLocaleString()}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            ${file.file_type === 'directory' ? `<button data-path="${filePath}" class="text-primary hover:text-primary/80 open-directory"><i class="fa fa-folder-open mr-1"></i>打开</button>` : `<button data-path="${filePath}" class="text-success hover:text-success/80 download-file mr-3"><i class="fa fa-download mr-1"></i>下载</button><button data-path="${filePath}" class="text-danger hover:text-danger/80 delete-file"><i class="fa fa-trash mr-1"></i>删除</button>`}
+                        </td>
+                    </tr>`;
+            });
+            listEl.innerHTML = html;
+            
+            document.querySelectorAll('.open-directory').forEach(btn => btn.addEventListener('click', () => loadFilesList(btn.dataset.path)));
+            document.querySelectorAll('.download-file').forEach(btn => btn.addEventListener('click', () => downloadFile(btn.dataset.path)));
+            document.querySelectorAll('.delete-file').forEach(btn => btn.addEventListener('click', () => deleteFile(btn.dataset.path)));
+        }
+
+        // --- WebSocket & 其它辅助函数 ---
+        
+        // WebSocket 连接
+        function connectWebSocket() {
+            if (ws) ws.close();
+            ws = new WebSocket(document.getElementById('websocket-url').value);
+            
+            ws.onopen = function() {
+                document.getElementById('websocket-status').innerHTML = `<div class="flex"><div class="flex-shrink-0"><i class="fa fa-check-circle text-success"></i></div><div class="ml-3"><p class="text-sm text-success">WebSocket已连接，正在接收实时数据...</p></div></div>`;
+                document.getElementById('websocket-status').className = 'bg-green-50 border-l-4 border-green-400 p-4 mb-6';
+                ws.send(JSON.stringify({ type: 'subscribe', channels: ['all'] }));
+                showNotification('连接成功', 'WebSocket已成功连接。', 'success');
+            };
+            
+            ws.onmessage = function(event) {
+                const message = JSON.parse(event.data);
+                switch(message.type) {
+                    case 'data': handleDataMessage(message); break;
+                    case 'trigger_event': showNotification('触发事件', `通道 ${message.channel} 检测到触发事件。`, 'info'); break;
+                    case 'trigger_burst_complete':
+                        showNotification('触发批次完成', `批次 ${message.burst_id} 已完成。`, 'info');
+                        loadTriggersList();
+                        break;
+                }
+            };
+            
+            ws.onclose = function() {
+                document.getElementById('websocket-status').innerHTML = `<div class="flex"><div class="flex-shrink-0"><i class="fa fa-exclamation-triangle text-yellow-400"></i></div><div class="ml-3"><p class="text-sm text-yellow-700">WebSocket连接已关闭，请重新连接。</p></div></div>`;
+                document.getElementById('websocket-status').className = 'bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6';
+                showNotification('连接关闭', 'WebSocket连接已关闭。', 'warning');
+                ws = null;
+            };
+            
+            ws.onerror = function() {
+                document.getElementById('websocket-status').innerHTML = `<div class="flex"><div class="flex-shrink-0"><i class="fa fa-exclamation-circle text-red-400"></i></div><div class="ml-3"><p class="text-sm text-red-700">WebSocket连接错误: 无法连接到服务器。</p></div></div>`;
+                document.getElementById('websocket-status').className = 'bg-red-50 border-l-4 border-red-400 p-4 mb-6';
+                showNotification('连接错误', '无法建立WebSocket连接。', 'error');
+                ws = null;
+            };
+        }
+
+        // 处理数据消息
+        function handleDataMessage(message) {
+            if (chartPaused || !message.data) return;
+            document.getElementById('sample-rate').textContent = `${message.sample_rate} Hz`;
+            document.getElementById('current-channel').textContent = message.channel_count > 1 ? '多通道' : '0';
+            document.getElementById('data-packets').textContent = parseInt(document.getElementById('data-packets').textContent) + 1;
+            document.getElementById('data-points').textContent = parseInt(document.getElementById('data-points').textContent) + message.data.length;
+            if (message.metadata) {
+                document.getElementById('processing-time').textContent = `${message.metadata.processing_time_us} μs`;
+                if (message.metadata.channel_info && message.metadata.channel_info.length > 0) {
+                    const info = message.metadata.channel_info[0];
+                    document.getElementById('min-value').textContent = info.min_value.toFixed(2);
+                    document.getElementById('max-value').textContent = info.max_value.toFixed(2);
+                    document.getElementById('avg-value').textContent = info.avg_value.toFixed(2);
+                }
+            }
+            const maxDataPoints = 100;
+            message.data.forEach((value, index) => {
+                const channelIndex = index % message.channel_count;
+                if (channelIndex < chartData.datasets.length) {
+                    chartData.datasets[channelIndex].data.push(parseFloat(value));
+                    if (chartData.datasets[channelIndex].data.length > maxDataPoints) chartData.datasets[channelIndex].data.shift();
+                }
+            });
+            chartData.labels = Array.from({length: Math.max(...chartData.datasets.map(ds => ds.data.length))}, (_, i) => i);
+            realtimeChart.update();
+        }
+
+        function openSaveTriggerModal(burstId) {
+            selectedBurstId = burstId;
+            document.getElementById('save-burst-id').value = burstId;
+            document.getElementById('save-trigger-modal').classList.remove('hidden');
+        }
+
+        function startCollectionTimer() {
+            if (collectionTimer) clearInterval(collectionTimer);
+            collectionTimer = setInterval(() => {
+                if (!collectionStartTime) { clearInterval(collectionTimer); return; }
+                document.getElementById('collection-time').textContent = formatSeconds(Math.floor((new Date() - collectionStartTime) / 1000));
+            }, 1000);
+        }
+
+        function stopCollectionTimer() {
+            if (collectionTimer) { clearInterval(collectionTimer); collectionTimer = null; }
+        }
+
+        function addChannelConfig() {
+            const container = document.getElementById('channels-container');
+            const channelCount = container.querySelectorAll('.channel-config').length;
+            const newChannel = document.createElement('div');
+            newChannel.className = 'channel-config bg-gray-50 p-4 rounded-lg animate-fade-in';
+            newChannel.innerHTML = `<div class="flex items-center justify-between mb-4"><h3 class="font-medium">通道 ${channelCount}</h3><button type="button" class="text-danger hover:text-danger/80 remove-channel"><i class="fa fa-trash"></i></button></div><div class="grid grid-cols-1 md:grid-cols-2 gap-4"><div><label for="sample-rate-${channelCount}" class="block text-sm font-medium text-gray-700 mb-1">采样率 (Hz)</label><input type="number" id="sample-rate-${channelCount}" value="10000" min="1" max="100000" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md"></div><div><label for="format-${channelCount}" class="block text-sm font-medium text-gray-700 mb-1">数据格式</label><select id="format-${channelCount}" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md"><option value="1">int16</option><option value="2">int32</option><option value="4">float32</option></select></div></div>`;
+            container.appendChild(newChannel);
+            newChannel.querySelector('.remove-channel').addEventListener('click', () => { newChannel.remove(); renumberChannels(); });
+        }
+
+        function renumberChannels() {
+            document.querySelectorAll('.channel-config').forEach((channel, index) => {
+                channel.querySelector('h3').textContent = `通道 ${index}`;
+                channel.querySelector('input[id^="sample-rate-"]').id = `sample-rate-${index}`;
+                channel.querySelector('select[id^="format-"]').id = `format-${index}`;
+            });
+        }
+
+        function saveConnectionSettings(e) {
+            e.preventDefault();
+            localStorage.setItem('httpApiUrl', document.getElementById('http-api-url').value);
+            localStorage.setItem('websocketUrl', document.getElementById('websocket-url').value);
+            showNotification('设置已保存', ws ? '连接设置已更新，请重新连接以生效。' : '连接设置已成功保存。', 'info');
+        }
+
+        function showNotification(title, message, type = 'info') {
+            const notificationEl = document.getElementById('notification');
+            document.getElementById('notification-title').textContent = title;
+            document.getElementById('notification-message').textContent = message;
+            const iconEl = document.getElementById('notification-icon');
+            if (type === 'success') iconEl.innerHTML = '<i class="fa fa-check-circle text-success text-xl"></i>';
+            else if (type === 'error') iconEl.innerHTML = '<i class="fa fa-exclamation-circle text-danger text-xl"></i>';
+            else if (type === 'warning') iconEl.innerHTML = '<i class="fa fa-exclamation-triangle text-warning text-xl"></i>';
+            else iconEl.innerHTML = '<i class="fa fa-info-circle text-info text-xl"></i>';
+            notificationEl.style.transform = 'translateX(0)';
+            setTimeout(() => { notificationEl.style.transform = 'translateX(calc(100% + 1rem))'; }, 3000);
+        }
+
+        function formatSeconds(seconds) {
+            const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
+            const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+            const s = (seconds % 60).toString().padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        }
+
+        function getQualityBadge(quality) {
+            if (quality === 'Good') return '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">良好</span>';
+            if (quality === 'Warning') return '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">警告</span>';
+            return '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">错误</span>';
+        }
+
+        // 绑定事件处理程序
+        function bindEventHandlers() {
+            // 通用POST命令发送函数
+            async function sendCommand(endpoint, successMsg) {
+                try {
+                    const response = await fetch(`${getApiBaseUrl()}${endpoint}`, { method: 'POST' });
+                    const result = await response.json();
+                    if (result.success) {
+                        showNotification('操作成功', successMsg, 'success');
+                        loadSystemStatus();
+                    } else {
+                        showNotification('操作失败', result.error, 'error');
+                    }
+                } catch (error) {
+                    showNotification('网络错误', '无法发送命令到API。', 'error');
+                }
+            }
+
+            document.getElementById('mobile-menu-button').addEventListener('click', () => document.getElementById('mobile-sidebar').classList.remove('hidden'));
+            document.getElementById('close-mobile-menu').addEventListener('click', () => document.getElementById('mobile-sidebar').classList.add('hidden'));
+            document.querySelectorAll('.mobile-nav-link').forEach(link => link.addEventListener('click', () => document.getElementById('mobile-sidebar').classList.add('hidden')));
+            document.getElementById('close-notification').addEventListener('click', () => document.getElementById('notification').style.transform = 'translateX(calc(100% + 1rem))');
+            
+            document.getElementById('refresh-status').addEventListener('click', loadSystemStatus);
+            document.getElementById('start-collection').addEventListener('click', () => sendCommand('/api/control/start', '数据采集已开始。'));
+            document.getElementById('stop-collection').addEventListener('click', () => sendCommand('/api/control/stop', '数据采集已停止。'));
+            document.getElementById('ping-device').addEventListener('click', () => sendCommand('/api/control/ping', '设备Ping命令已发送。'));
+            document.getElementById('device-info').addEventListener('click', () => sendCommand('/api/control/device_info', '设备信息请求已发送。'));
+            document.getElementById('continuous-mode').addEventListener('click', () => sendCommand('/api/control/continuous_mode', '已切换到连续模式。'));
+            document.getElementById('trigger-mode').addEventListener('click', () => sendCommand('/api/control/trigger_mode', '已切换到触发模式。'));
+            document.getElementById('request-trigger-data').addEventListener('click', () => sendCommand('/api/control/request_trigger_data', '触发数据请求已发送。'));
+
+            document.getElementById('connect-websocket').addEventListener('click', connectWebSocket);
+            
+            document.getElementById('pause-chart').addEventListener('click', function() {
+                chartPaused = !chartPaused;
+                this.innerHTML = chartPaused ? '<i class="fa fa-play mr-1"></i>继续' : '<i class="fa fa-pause mr-1"></i>暂停';
+            });
+            document.getElementById('clear-chart').addEventListener('click', () => {
+                chartData.datasets.forEach(ds => ds.data = []);
+                chartData.labels = [];
+                realtimeChart.update();
+                ['data-points', 'data-packets'].forEach(id => document.getElementById(id).textContent = '0');
+                ['min-value', 'max-value', 'avg-value'].forEach(id => document.getElementById(id).textContent = '0.00');
+            });
+            
+            document.getElementById('data-channel-select').addEventListener('change', function() {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    const val = this.value;
+                    ws.send(JSON.stringify({ type: 'subscribe', channels: val === 'all' ? ['all'] : [val] }));
+                }
+            });
+            
+            document.getElementById('refresh-triggers').addEventListener('click', loadTriggersList);
+            document.getElementById('close-modal').addEventListener('click', () => document.getElementById('trigger-preview-modal').classList.add('hidden'));
+            document.getElementById('close-preview-btn').addEventListener('click', () => document.getElementById('trigger-preview-modal').classList.add('hidden'));
+            document.getElementById('save-trigger-btn').addEventListener('click', () => {
+                document.getElementById('trigger-preview-modal').classList.add('hidden');
+                openSaveTriggerModal(selectedBurstId);
+            });
+            
+            document.getElementById('close-save-modal').addEventListener('click', () => document.getElementById('save-trigger-modal').classList.add('hidden'));
+            document.getElementById('cancel-save-btn').addEventListener('click', () => document.getElementById('save-trigger-modal').classList.add('hidden'));
+            document.getElementById('confirm-save-btn').addEventListener('click', saveTriggerBurst);
+            
+            document.getElementById('refresh-files').addEventListener('click', () => loadFilesList(currentDirectory));
+            document.getElementById('upload-file').addEventListener('click', () => alert('文件上传功能待实现。'));
+            document.getElementById('go-to-parent').addEventListener('click', () => {
+                if (!currentDirectory) return;
+                loadFilesList(currentDirectory.substring(0, currentDirectory.lastIndexOf('/')));
+            });
+
+            document.getElementById('add-channel').addEventListener('click', addChannelConfig);
+            document.querySelectorAll('.remove-channel').forEach(btn => btn.addEventListener('click', function() {
+                this.closest('.channel-config').remove();
+                renumberChannels();
+            }));
+            
+            document.getElementById('stream-config-form').addEventListener('submit', saveStreamConfig);
+            document.getElementById('connection-settings-form').addEventListener('submit', saveConnectionSettings);
+            
+            if (localStorage.getItem('httpApiUrl')) document.getElementById('http-api-url').value = localStorage.getItem('httpApiUrl');
+            if (localStorage.getItem('websocketUrl')) document.getElementById('websocket-url').value = localStorage.getItem('websocketUrl');
+        }
+    </script>
+</body>
+</html>
+
