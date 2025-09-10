@@ -169,19 +169,32 @@ impl FileManager {
     /// 将相对路径拼到 base 上，并保证**不逃逸出 base**
     fn safe_join(&self, rel: &Path, ensure_dir: bool) -> Result<PathBuf> {
         let full = self.base.join(rel);
-        // ensure_dir=true 时可不存在（用于创建目录），只校验父目录不逃逸
-        let check_path = if ensure_dir { full.parent().unwrap_or(&full) } else { &full };
+        
+        // 使用更可靠的路径验证方法
+        let check_path = if ensure_dir { 
+            full.parent().unwrap_or(&full) 
+        } else { 
+            &full 
+        };
 
-        // 使用标准化组件进行"软"校验
-        let canon_base = self.base.canonicalize()?;
-        let canon_check = check_path.canonicalize().unwrap_or_else(|_| check_path.to_path_buf());
-
-        if !canon_check.starts_with(&canon_base) {
+        // 方法1: 使用组件比较而不是字符串比较
+        let base_components: Vec<_> = self.base.components().collect();
+        let check_components: Vec<_> = check_path.components().collect();
+        
+        // 确保 check_path 的组件以 base 的组件开头
+        if check_components.len() < base_components.len() {
             return Err(anyhow!("path escapes base directory"));
         }
+        
+        for (i, base_comp) in base_components.iter().enumerate() {
+            if i >= check_components.len() || &check_components[i] != base_comp {
+                return Err(anyhow!("path escapes base directory: component mismatch"));
+            }
+        }
+        
         Ok(full)
     }
-
+    
     /// 仅允许相对路径；禁止 `..`、盘符、绝对路径、根目录
     fn sanitize_rel_path(input: &str) -> Result<PathBuf> {
         let p = Path::new(input);
