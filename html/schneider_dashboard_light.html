@@ -734,10 +734,23 @@ document.addEventListener('DOMContentLoaded', function() {
             realtimeChartContainer.style.height = 'auto';
             realtimeChartContainer.classList.add('split-view-container');
             if (channelCount > 0) {
+                // 改进的高度分配逻辑
+                const totalHeight = 510;
+                const marginPerChannel = 8; // 通道间距
+                const totalMargins = (channelCount - 1) * marginPerChannel;
+                const availableHeight = totalHeight - totalMargins;
+                const heightPerChannel = Math.floor(availableHeight / channelCount);
+                
                 for (let i = 0; i < channelCount; i++) {
                     const div = document.createElement('div');
-                    div.style.height = `${510 / channelCount}px`;
+                    div.style.height = `${heightPerChannel}px`;
                     div.style.width = '100%';
+                    
+                    // 除了最后一个通道，都添加底部间距
+                    if (i < channelCount - 1) {
+                        div.style.marginBottom = `${marginPerChannel}px`;
+                    }
+                    
                     realtimeChartContainer.appendChild(div);
                 }
                 initCharts();
@@ -762,12 +775,26 @@ document.addEventListener('DOMContentLoaded', function() {
             chartDivs.forEach((div, i) => {
                 const chart = echarts.init(div);
                 const option = getBaseChartOption();
+                
                 if (i === channelCount - 1) {
-                    option.dataZoom = [ { type: 'inside' }, { type: 'slider', height: 20, bottom: 5 } ];
+                    option.dataZoom = [ 
+                        { type: 'inside' }, 
+                        { type: 'slider', height: 20, bottom: 5 } 
+                    ];
+                    option.grid.bottom = 50; // 给滑块更多空间
                 } else {
-                    option.dataZoom = [ { type: 'inside' }, { type: 'slider', show: false } ];
+                    option.dataZoom = [ 
+                        { type: 'inside' }, 
+                        { type: 'slider', show: false } 
+                    ];
+                    option.grid.bottom = 25; // 减少底部空间
                 }
-                option.grid.bottom = (i === channelCount - 1) ? 60 : 20;
+                
+                // 调整其他边距确保充分利用空间
+                option.grid.top = 25;
+                option.grid.left = 60;
+                option.grid.right = 20;
+                
                 chart.setOption(option);
                 splitCharts[i] = chart;
             });
